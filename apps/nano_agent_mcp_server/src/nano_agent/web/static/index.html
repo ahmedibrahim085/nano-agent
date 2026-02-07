@@ -199,7 +199,83 @@
                 </div>
             </div>
         </section>
+
+        <!-- === SECTION 4: EXECUTION HISTORY === -->
+        <section class="mb-8 border-l-4 border-indigo-500 bg-slate-800 rounded-r-lg p-6">
+          <div class="flex items-center justify-between mb-4">
+            <div class="flex items-center gap-3">
+              <h2 class="text-xl font-semibold text-white">History</h2>
+              <span id="history-count" class="bg-slate-700 text-slate-300 text-sm px-2 py-1 rounded-full">0</span>
+            </div>
+            <button onclick="clearHistory()" class="text-sm bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded-md transition-colors">
+              Clear
+            </button>
+          </div>
+          <div id="history-container"></div>
+          <div id="history-empty" class="hidden text-center py-8 text-slate-400">
+            <svg class="w-12 h-12 mx-auto mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            <p>No executions yet. Use the Playground above to run prompts.</p>
+          </div>
+        </section>
+
+        <!-- === SECTION 5: CONFIGURATION === -->
+        <section class="mb-8 border-l-4 border-violet-500 bg-slate-800 rounded-r-lg p-6">
+          <h2 class="text-xl font-semibold text-white mb-4">Configuration</h2>
+          <div id="config-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+        </section>
+
+        <!-- === SECTION 6: AGENT CONFIG EDITOR === -->
+        <section class="mb-8 border-l-4 border-indigo-500 bg-slate-800 rounded-r-lg p-6">
+          <div class="flex items-center justify-between mb-4">
+            <div class="flex items-center gap-3">
+              <h2 class="text-xl font-semibold text-white">Agent Configs</h2>
+              <span id="agents-count" class="bg-slate-700 text-slate-300 text-sm px-2 py-1 rounded-full">0</span>
+            </div>
+            <button onclick="openNewAgentModal()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md transition-colors text-sm font-medium">
+              + New Agent
+            </button>
+          </div>
+          <div id="agents-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+          <div id="agents-empty" class="hidden text-center py-8 text-slate-400">
+            <svg class="w-12 h-12 mx-auto mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+            </svg>
+            <p>No agent configs found. Create one to get started.</p>
+          </div>
+        </section>
+
     </main>
+
+    <!-- Agent Editor Modal -->
+    <div id="agent-modal" class="hidden fixed inset-0 z-50">
+      <div class="absolute inset-0 bg-black/70" onclick="closeAgentModal()"></div>
+      <div class="absolute inset-4 md:inset-10 lg:inset-20 bg-slate-800 rounded-lg shadow-2xl flex flex-col">
+        <div class="flex items-center justify-between p-4 border-b border-slate-700">
+          <h3 id="agent-modal-title" class="text-lg font-semibold text-white">Edit Agent</h3>
+          <button onclick="closeAgentModal()" class="text-slate-400 hover:text-white transition-colors">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+            </svg>
+          </button>
+        </div>
+        <div class="flex-1 p-4 overflow-hidden flex flex-col">
+          <div id="agent-name-input-container" class="mb-4 hidden">
+            <label class="block text-sm font-medium text-slate-300 mb-2">Agent Name</label>
+            <input type="text" id="agent-name-input" class="w-full bg-slate-700 border border-slate-600 rounded-md px-3 py-2 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="my-agent">
+          </div>
+          <div class="flex-1 flex flex-col">
+            <label class="block text-sm font-medium text-slate-300 mb-2">Agent Configuration (Markdown)</label>
+            <textarea id="agent-content-input" class="flex-1 w-full bg-slate-700 border border-slate-600 rounded-md px-3 py-2 text-white font-mono text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none" placeholder="# Agent Name&#10;&#10;Describe your agent here..."></textarea>
+          </div>
+        </div>
+        <div class="flex items-center justify-end gap-3 p-4 border-t border-slate-700">
+          <button onclick="closeAgentModal()" class="px-4 py-2 text-slate-300 hover:text-white transition-colors">Cancel</button>
+          <button onclick="saveCurrentAgent()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md transition-colors">Save</button>
+        </div>
+      </div>
+    </div>
 
     <!-- Footer -->
     <footer class="bg-slate-800 border-t border-slate-700 py-4 px-6">
@@ -232,12 +308,16 @@
             await loadProviders();
             await loadModels();
             populateProviderSelect();
+            fetchHistory();
+            fetchConfig();
+            fetchAgents();
 
             // Auto-refresh every 30 seconds
             setInterval(async () => {
                 await loadProviders();
                 await loadModels();
                 populateProviderSelect();
+                fetchHistory();
             }, 30000);
         }
         
@@ -531,6 +611,294 @@
             }
         }
         
+        // === SECTION 4-6 JAVASCRIPT (generated by Z.ai GLM-4.7) ===
+
+        // ===== EXECUTION HISTORY =====
+        let historyData = [];
+
+        async function fetchHistory() {
+          try {
+            const response = await fetch('/api/history');
+            const data = await response.json();
+            historyData = data.history || [];
+            renderHistory();
+          } catch (error) {
+            console.error('Failed to fetch history:', error);
+          }
+        }
+
+        function renderHistory() {
+          const container = document.getElementById('history-container');
+          const emptyState = document.getElementById('history-empty');
+          const countBadge = document.getElementById('history-count');
+          countBadge.textContent = historyData.length;
+          if (historyData.length === 0) {
+            container.innerHTML = '';
+            emptyState.classList.remove('hidden');
+            return;
+          }
+          emptyState.classList.add('hidden');
+          let html = `<div class="overflow-x-auto"><table class="w-full text-sm"><thead>
+            <tr class="border-b border-slate-700 text-slate-400 text-left">
+              <th class="pb-3 pr-4 font-medium">#</th>
+              <th class="pb-3 pr-4 font-medium">Timestamp</th>
+              <th class="pb-3 pr-4 font-medium">Prompt</th>
+              <th class="pb-3 pr-4 font-medium">Provider</th>
+              <th class="pb-3 pr-4 font-medium">Model</th>
+              <th class="pb-3 pr-4 font-medium">Status</th>
+              <th class="pb-3 pr-4 font-medium">Time</th>
+              <th class="pb-3 font-medium">Tokens</th>
+            </tr></thead><tbody>`;
+          historyData.forEach((item, index) => {
+            const truncatedPrompt = item.prompt.length > 50 ? item.prompt.substring(0, 50) + '...' : item.prompt;
+            const statusClass = item.success ? 'text-emerald-400' : 'text-red-400';
+            const statusText = item.success ? 'Success' : 'Error';
+            const timestamp = new Date(item.timestamp).toLocaleString();
+            html += `
+              <tr class="border-b border-slate-700/50 hover:bg-slate-700/50 cursor-pointer transition-colors" onclick="toggleHistoryRow('${item.id}')">
+                <td class="py-3 pr-4 text-slate-400">${index + 1}</td>
+                <td class="py-3 pr-4 text-slate-300 whitespace-nowrap">${timestamp}</td>
+                <td class="py-3 pr-4 text-slate-300" title="${escapeHtml(item.prompt)}">${escapeHtml(truncatedPrompt)}</td>
+                <td class="py-3 pr-4 text-slate-300">${escapeHtml(item.provider)}</td>
+                <td class="py-3 pr-4 text-slate-300">${escapeHtml(item.model)}</td>
+                <td class="py-3 pr-4 ${statusClass} font-medium">${statusText}</td>
+                <td class="py-3 pr-4 text-slate-300">${item.execution_time_seconds?.toFixed(2) || 'N/A'}s</td>
+                <td class="py-3 text-slate-300">${item.token_usage?.total_tokens || 'N/A'}</td>
+              </tr>
+              <tr id="history-row-${item.id}" class="hidden">
+                <td colspan="8" class="p-4 bg-slate-900/50">
+                  <div class="rounded-md bg-slate-900 p-4 border border-slate-700">
+                    <div class="mb-3"><span class="text-slate-400 text-sm font-medium">Full Prompt:</span>
+                      <pre class="mt-1 text-slate-300 text-sm whitespace-pre-wrap font-mono bg-slate-800 p-3 rounded">${escapeHtml(item.prompt)}</pre>
+                    </div>
+                    ${item.success ? `<div><span class="text-slate-400 text-sm font-medium">Result:</span>
+                      <pre class="mt-1 text-slate-300 text-sm whitespace-pre-wrap font-mono bg-slate-800 p-3 rounded">${escapeHtml(item.result)}</pre></div>`
+                    : `<div><span class="text-slate-400 text-sm font-medium">Error:</span>
+                      <pre class="mt-1 text-red-400 text-sm whitespace-pre-wrap font-mono bg-slate-800 p-3 rounded">${escapeHtml(item.error || 'Unknown error')}</pre></div>`}
+                    ${item.token_usage ? `<div class="mt-3 flex gap-4 text-sm text-slate-400">
+                      <span>Input: ${item.token_usage.input_tokens}</span>
+                      <span>Output: ${item.token_usage.output_tokens}</span>
+                      <span>Total: ${item.token_usage.total_tokens}</span></div>` : ''}
+                  </div>
+                </td>
+              </tr>`;
+          });
+          html += '</tbody></table></div>';
+          // Data is from our own API, not user input
+          container.innerHTML = html;
+        }
+
+        function toggleHistoryRow(id) {
+          const row = document.getElementById(`history-row-${id}`);
+          if (row) row.classList.toggle('hidden');
+        }
+
+        async function clearHistory() {
+          if (!confirm('Clear all execution history?')) return;
+          try {
+            await fetch('/api/history', { method: 'DELETE' });
+            await fetchHistory();
+          } catch (error) {
+            alert('Failed to clear history: ' + error.message);
+          }
+        }
+
+        // ===== CONFIGURATION =====
+        let configData = {};
+
+        async function fetchConfig() {
+          try {
+            const response = await fetch('/api/config');
+            const data = await response.json();
+            configData = data.config || {};
+            renderConfig();
+          } catch (error) {
+            console.error('Failed to fetch config:', error);
+          }
+        }
+
+        function renderConfig() {
+          const container = document.getElementById('config-container');
+          const providers = Object.keys(configData);
+          if (providers.length === 0) { container.innerHTML = '<div class="col-span-full text-center py-4 text-slate-400">No configuration data.</div>'; return; }
+          let html = '';
+          providers.forEach(provider => {
+            const config = configData[provider];
+            let statusBadge = '', updateButton = '';
+            if (config.status === 'configured') {
+              statusBadge = '<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-emerald-900/50 text-emerald-400 border border-emerald-700">Configured</span>';
+              updateButton = `<button onclick="showKeyInput('${provider}', '${config.env_key}')" class="mt-3 text-sm text-indigo-400 hover:text-indigo-300 transition-colors">Update</button>`;
+            } else if (config.status === 'missing') {
+              statusBadge = '<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-900/50 text-red-400 border border-red-700">Missing</span>';
+              updateButton = `<button onclick="showKeyInput('${provider}', '${config.env_key}')" class="mt-3 text-sm text-indigo-400 hover:text-indigo-300 transition-colors">Set Key</button>`;
+            } else {
+              statusBadge = '<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-slate-700 text-slate-400 border border-slate-600">Not Required</span>';
+            }
+            html += `
+              <div class="bg-slate-900 rounded-lg p-4 border border-slate-700 hover:bg-slate-700 transition-colors" id="config-card-${provider}">
+                <div class="flex items-center justify-between mb-2">
+                  <h3 class="text-white font-medium capitalize">${escapeHtml(provider)}</h3>
+                  ${statusBadge}
+                </div>
+                <div class="text-sm text-slate-400 mb-1"><span class="font-mono text-xs">${config.env_key || 'None'}</span></div>
+                ${config.masked_value ? `<div class="text-sm text-slate-500 font-mono mt-2">${escapeHtml(config.masked_value)}</div>` : ''}
+                ${updateButton}
+                <div id="key-input-${provider}" class="hidden mt-3">
+                  <input type="password" id="key-value-${provider}" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Enter API key">
+                  <div class="flex gap-2 mt-2">
+                    <button onclick="saveKey('${config.env_key}', '${provider}')" class="text-sm bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded transition-colors">Save</button>
+                    <button onclick="hideKeyInput('${provider}')" class="text-sm text-slate-400 hover:text-white px-3 py-1 transition-colors">Cancel</button>
+                  </div>
+                </div>
+              </div>`;
+          });
+          // Data is from our own API
+          container.innerHTML = html;
+        }
+
+        function showKeyInput(provider, envKey) {
+          document.getElementById(`key-input-${provider}`).classList.remove('hidden');
+          const input = document.getElementById(`key-value-${provider}`);
+          input.value = '';
+          input.focus();
+        }
+
+        function hideKeyInput(provider) {
+          document.getElementById(`key-input-${provider}`).classList.add('hidden');
+        }
+
+        async function saveKey(envKey, provider) {
+          const input = document.getElementById(`key-value-${provider}`);
+          const value = input.value.trim();
+          if (!value) { alert('Please enter a value'); return; }
+          try {
+            const response = await fetch('/api/config', {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ key: envKey, value: value })
+            });
+            const data = await response.json();
+            if (data.updated) await fetchConfig();
+            else alert('Failed to update configuration');
+          } catch (error) {
+            alert('Failed to save key: ' + error.message);
+          }
+        }
+
+        // ===== AGENT CONFIG EDITOR =====
+        let agentsData = [];
+        let currentEditingAgent = null;
+
+        async function fetchAgents() {
+          try {
+            const response = await fetch('/api/agents');
+            const data = await response.json();
+            agentsData = data.agents || [];
+            renderAgents();
+          } catch (error) {
+            console.error('Failed to fetch agents:', error);
+          }
+        }
+
+        function renderAgents() {
+          const container = document.getElementById('agents-container');
+          const emptyState = document.getElementById('agents-empty');
+          const countBadge = document.getElementById('agents-count');
+          countBadge.textContent = agentsData.length;
+          if (agentsData.length === 0) { container.innerHTML = ''; emptyState.classList.remove('hidden'); return; }
+          emptyState.classList.add('hidden');
+          let html = '';
+          agentsData.forEach(agent => {
+            const truncatedContent = agent.content.length > 100 ? agent.content.substring(0, 100) + '...' : agent.content;
+            const sizeKB = (agent.size / 1024).toFixed(1);
+            html += `
+              <div class="bg-slate-900 rounded-lg p-4 border border-slate-700 hover:bg-slate-700 transition-colors">
+                <div class="flex items-start justify-between mb-2">
+                  <h3 class="text-white font-medium">${escapeHtml(agent.name)}</h3>
+                  <span class="text-xs text-slate-500">${sizeKB} KB</span>
+                </div>
+                <pre class="text-sm text-slate-400 mb-3 whitespace-pre-wrap font-mono bg-slate-800 p-2 rounded max-h-24 overflow-hidden">${escapeHtml(truncatedContent)}</pre>
+                <div class="flex gap-2">
+                  <button onclick="openAgentEditor('${escapeHtml(agent.name)}')" class="flex-1 text-sm bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded transition-colors">Edit</button>
+                  <button onclick="deleteAgent('${escapeHtml(agent.name)}')" class="text-sm bg-red-600/20 hover:bg-red-600/40 text-red-400 px-3 py-1.5 rounded transition-colors">Delete</button>
+                </div>
+              </div>`;
+          });
+          // Data is from our own API
+          container.innerHTML = html;
+        }
+
+        async function openAgentEditor(name) {
+          currentEditingAgent = name;
+          try {
+            const response = await fetch(`/api/agents/${encodeURIComponent(name)}`);
+            const data = await response.json();
+            document.getElementById('agent-modal-title').textContent = 'Edit Agent';
+            document.getElementById('agent-name-input-container').classList.add('hidden');
+            document.getElementById('agent-content-input').value = data.content || '';
+            document.getElementById('agent-modal').classList.remove('hidden');
+          } catch (error) {
+            alert('Failed to load agent: ' + error.message);
+          }
+        }
+
+        function openNewAgentModal() {
+          currentEditingAgent = null;
+          document.getElementById('agent-modal-title').textContent = 'New Agent';
+          document.getElementById('agent-name-input-container').classList.remove('hidden');
+          document.getElementById('agent-name-input').value = '';
+          document.getElementById('agent-content-input').value = '';
+          document.getElementById('agent-modal').classList.remove('hidden');
+          document.getElementById('agent-name-input').focus();
+        }
+
+        function closeAgentModal() {
+          document.getElementById('agent-modal').classList.add('hidden');
+          currentEditingAgent = null;
+        }
+
+        async function saveCurrentAgent() {
+          const content = document.getElementById('agent-content-input').value;
+          if (!content.trim()) { alert('Please enter agent content'); return; }
+          let name = currentEditingAgent;
+          if (!name) {
+            name = document.getElementById('agent-name-input').value.trim();
+            if (!name) { alert('Please enter an agent name'); return; }
+            if (!/^[a-zA-Z0-9_-]+$/.test(name)) { alert('Name must contain only letters, numbers, hyphens, underscores'); return; }
+          }
+          try {
+            const response = await fetch(`/api/agents/${encodeURIComponent(name)}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name, content })
+            });
+            const data = await response.json();
+            if (data.status === 'saved') { closeAgentModal(); await fetchAgents(); }
+            else alert('Failed to save agent');
+          } catch (error) {
+            alert('Failed to save agent: ' + error.message);
+          }
+        }
+
+        async function deleteAgent(name) {
+          if (!confirm(`Delete agent "${name}"?`)) return;
+          try {
+            const response = await fetch(`/api/agents/${encodeURIComponent(name)}`, { method: 'DELETE' });
+            const data = await response.json();
+            if (data.status === 'deleted') await fetchAgents();
+            else alert('Failed to delete agent');
+          } catch (error) {
+            alert('Failed to delete agent: ' + error.message);
+          }
+        }
+
+        function escapeHtml(text) {
+          if (!text) return '';
+          const div = document.createElement('div');
+          div.textContent = text;
+          return div.innerHTML;
+        }
+
         // Initialize on load
         window.addEventListener('DOMContentLoaded', init);
     </script>

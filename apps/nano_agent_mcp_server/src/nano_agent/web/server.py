@@ -5,16 +5,20 @@ Serves the dashboard HTML and provides REST API endpoints for:
 - Provider health checks
 - Model catalog
 - Agent prompt execution
+- Execution history
+- Configuration management
+- Agent config editor
 """
 
-import asyncio
+import glob as globmod
 import os
 import time
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -35,6 +39,10 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Nano-Agent Dashboard", version="1.0.0")
 
+# --- In-memory execution history ---
+execution_history: list[dict] = []
+MAX_HISTORY = 100
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -52,6 +60,16 @@ class RunRequest(BaseModel):
     prompt: str
     model: str
     provider: str
+
+
+class ConfigUpdate(BaseModel):
+    key: str
+    value: str
+
+
+class AgentConfig(BaseModel):
+    name: str
+    content: str
 
 
 # --- Provider Health ---
@@ -202,6 +220,22 @@ async def run_agent(req: RunRequest):
             model=req.model,
             provider=req.provider,
         )
+        # Save to history
+        entry = {
+            "id": len(execution_history) + 1,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "prompt": req.prompt,
+            "model": req.model,
+            "provider": req.provider,
+            "success": result.get("success", False),
+            "result": result.get("result"),
+            "error": result.get("error"),
+            "execution_time_seconds": result.get("execution_time_seconds"),
+            "token_usage": result.get("metadata", {}).get("token_usage"),
+        }
+        execution_history.insert(0, entry)
+        if len(execution_history) > MAX_HISTORY:
+            execution_history.pop()
         return result
     except Exception as e:
         return {
@@ -211,6 +245,109 @@ async def run_agent(req: RunRequest):
             "metadata": {},
             "execution_time_seconds": None,
         }
+
+
+# --- Feature 4: Execution History ---
+
+@app.get("/api/history")
+async def get_history():
+    return {"history": execution_history}
+
+
+@app.delete("/api/history")
+async def clear_history():
+    execution_history.clear()
+    return {"cleared": True}
+
+
+# --- Feature 5: Configuration Manager ---
+
+AGENT_CONFIG_DIR = Path.home() / ".claude" / "agents"
+ENV_FILE = Path(__file__).parents[4] / ".env"
+
+
+def _mask_key(value: str) -> str:
+    """Mask API key showing only last 4 chars."""
+    if not value or len(value) <= 4:
+        return "****"
+    return "*" * (len(value) - 4) + value[-4:]
+
+
+@app.get("/api/config")
+async def get_config():
+    """Return current configuration with masked API keys."""
+    config = {}
+    for provider, env_key in PROVIDER_REQUIREMENTS.items():
+        if env_key is None:
+            config[provider] = {"env_key": None, "status": "not_required"}
+        else:
+            value = os.getenv(env_key, "")
+            config[provider] = {
+                "env_key": env_key,
+                "is_set": bool(value),
+                "masked_value": _mask_key(value) if value else "",
+                "status": "configured" if value else "missing",
+            }
+    return {"config": config, "env_file": str(ENV_FILE)}
+
+
+@app.put("/api/config")
+async def update_config(update: ConfigUpdate):
+    """Update an environment variable (runtime only)."""
+    allowed_keys = {v for v in PROVIDER_REQUIREMENTS.values() if v is not None}
+    if update.key not in allowed_keys:
+        raise HTTPException(400, f"Cannot update key: {update.key}")
+    os.environ[update.key] = update.value
+    return {"updated": update.key, "status": "ok"}
+
+
+# --- Feature 6: Agent Config Editor ---
+
+@app.get("/api/agents")
+async def list_agents():
+    """List all nano-agent config files."""
+    pattern = str(AGENT_CONFIG_DIR / "nano-agent-*.md")
+    agents = []
+    for filepath in sorted(globmod.glob(pattern)):
+        p = Path(filepath)
+        content = p.read_text()
+        agents.append({
+            "name": p.stem,
+            "filename": p.name,
+            "path": str(p),
+            "size": p.stat().st_size,
+            "content": content,
+        })
+    return {"agents": agents}
+
+
+@app.get("/api/agents/{name}")
+async def get_agent(name: str):
+    """Read a single agent config."""
+    filepath = AGENT_CONFIG_DIR / f"{name}.md"
+    if not filepath.exists():
+        raise HTTPException(404, f"Agent config not found: {name}")
+    return {"name": name, "content": filepath.read_text(), "path": str(filepath)}
+
+
+@app.put("/api/agents/{name}")
+async def update_agent(name: str, config: AgentConfig):
+    """Create or update an agent config file."""
+    if not name.startswith("nano-agent-"):
+        raise HTTPException(400, "Agent name must start with 'nano-agent-'")
+    filepath = AGENT_CONFIG_DIR / f"{name}.md"
+    filepath.write_text(config.content)
+    return {"name": name, "status": "saved", "path": str(filepath)}
+
+
+@app.delete("/api/agents/{name}")
+async def delete_agent(name: str):
+    """Delete an agent config file."""
+    filepath = AGENT_CONFIG_DIR / f"{name}.md"
+    if not filepath.exists():
+        raise HTTPException(404, f"Agent config not found: {name}")
+    filepath.unlink()
+    return {"name": name, "status": "deleted"}
 
 
 def main():

@@ -51,7 +51,7 @@ from .constants import (
 )
 
 # Import tools from nano_agent_tools
-from .nano_agent_tools import get_nano_agent_tools
+from .nano_agent_tools import get_nano_agent_tools, set_workspace
 
 # Import provider configuration
 from .provider_config import ProviderConfig
@@ -323,27 +323,34 @@ async def _execute_nano_agent_async(request: PromptNanoAgentRequest, enable_rich
         
         # Setup provider-specific configurations
         ProviderConfig.setup_provider(request.provider)
-        
+
+        # Set workspace directory for agent tools
+        workspace_path = set_workspace(request.workspace)
+        logger.info(f"Agent workspace: {workspace_path}")
+
         # Get tools for the agent
         tools = get_nano_agent_tools()
-        
+
         # Configure model settings based on model capabilities
         base_settings = {
             "temperature": DEFAULT_TEMPERATURE,
             "max_tokens": MAX_TOKENS
         }
-        
+
         # Get filtered settings for the specific model
         model_settings = ProviderConfig.get_model_settings(
             model=request.model,
             provider=request.provider,
             base_settings=base_settings
         )
-        
+
+        # Build instructions with workspace context
+        instructions = NANO_AGENT_SYSTEM_PROMPT + f"\n\nWorkspace directory: {workspace_path}\n"
+
         # Create agent using the provider configuration
         agent = ProviderConfig.create_agent(
             name="NanoAgent",
-            instructions=NANO_AGENT_SYSTEM_PROMPT,
+            instructions=instructions,
             tools=tools,
             model=request.model,
             provider=request.provider,
@@ -456,24 +463,31 @@ def _execute_nano_agent(request: PromptNanoAgentRequest, enable_rich_logging: bo
         
         # Setup provider-specific configurations
         ProviderConfig.setup_provider(request.provider)
-        
+
+        # Set workspace directory for agent tools
+        workspace_path = set_workspace(request.workspace)
+        logger.info(f"Agent workspace: {workspace_path}")
+
         # Configure model settings based on model capabilities
         base_settings = {
             "temperature": DEFAULT_TEMPERATURE,
             "max_tokens": MAX_TOKENS
         }
-        
+
         # Get filtered settings for the specific model
         model_settings = ProviderConfig.get_model_settings(
             model=request.model,
             provider=request.provider,
             base_settings=base_settings
         )
-        
+
+        # Build instructions with workspace context
+        instructions = NANO_AGENT_SYSTEM_PROMPT + f"\n\nWorkspace directory: {workspace_path}\n"
+
         # Create agent with provider-specific configuration
         agent = ProviderConfig.create_agent(
             name="NanoAgent",
-            instructions=NANO_AGENT_SYSTEM_PROMPT,
+            instructions=instructions,
             tools=get_nano_agent_tools(),
             model=request.model,
             provider=request.provider,
@@ -562,37 +576,38 @@ async def prompt_nano_agent(
     agentic_prompt: str,
     model: str = DEFAULT_MODEL,
     provider: str = DEFAULT_PROVIDER,
+    workspace: str = "",
     ctx: Any = None  # Context will be injected by FastMCP when registered
 ) -> Dict[str, Any]:
     """
-    Execute an autonomous agent with a natural language prompt.
-    
-    This tool creates an AI agent that can perform complex, multi-step tasks
-    autonomously based on your natural language description. The agent has
-    access to file system tools and can read existing files, create new files,
-    and perform various data processing and code generation tasks.
-    
-    This implementation uses the OpenAI Agent SDK for robust tool handling
-    and conversation management.
-    
+    Execute an autonomous coding agent with a natural language prompt.
+
+    The agent can read/write/edit files AND execute shell commands in the
+    workspace directory. It plans, implements, and verifies its work.
+
     Args:
         agentic_prompt: Natural language description of the work to be done.
                        Be specific and detailed for best results.
                        Examples:
-                       - "Read all Python files in src/ and create a summary document"
-                       - "Generate unit tests for the data_processing module"
-                       - "Create a REST API with CRUD operations for a todo list"
-        
+                       - "Create a FastAPI app with CRUD endpoints for users"
+                       - "Read server.py and add a /health endpoint"
+                       - "Run npm install && npm test in the project"
+
         model: The LLM model to use for the agent. Options vary by provider:
                OpenAI: gpt-5-mini (default), gpt-5-nano, gpt-5, gpt-4o
-               Anthropic: claude-opus-4-1-20250805, claude-sonnet-4-20250514, etc.
-               Ollama: gpt-oss:20b, gpt-oss:120b (local models)
-        
+               Ollama: gpt-oss:20b, gpt-oss:120b, qwen3-coder:30b
+               Z.ai: glm-4.7, glm-4.5-air
+
         provider: The LLM provider. Options:
                  - "openai" (default): OpenAI's GPT models
-                 - "anthropic": Anthropic's Claude models via LiteLLM
                  - "ollama": Local models via Ollama
-        
+                 - "zai": Z.ai cloud models via LiteLLM
+                 - "anthropic": Anthropic's Claude models
+                 - "lmstudio": LM Studio local models
+
+        workspace: Working directory for the agent. Shell commands execute here
+                  and relative file paths resolve from here. Defaults to cwd.
+
         ctx: MCP context (automatically injected)
     
     Returns:
@@ -624,7 +639,8 @@ async def prompt_nano_agent(
         request = PromptNanoAgentRequest(
             agentic_prompt=agentic_prompt,
             model=model,
-            provider=provider
+            provider=provider,
+            workspace=workspace or None,
         )
         
         if ctx:

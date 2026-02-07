@@ -60,6 +60,7 @@ class RunRequest(BaseModel):
     prompt: str
     model: str
     provider: str
+    workspace: str = ""
 
 
 class ConfigUpdate(BaseModel):
@@ -219,6 +220,7 @@ async def run_agent(req: RunRequest):
             agentic_prompt=req.prompt,
             model=req.model,
             provider=req.provider,
+            workspace=req.workspace,
         )
         # Save to history
         entry = {

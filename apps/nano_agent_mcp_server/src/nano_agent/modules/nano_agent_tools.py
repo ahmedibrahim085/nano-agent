@@ -6,6 +6,7 @@ to complete its work. These are not exposed directly via MCP but are
 available to the agent during execution.
 """
 
+import asyncio
 import os
 import logging
 from pathlib import Path
@@ -488,6 +489,37 @@ def get_file_metadata(file_path: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+# Workspace directory for agent operations (set per-invocation)
+_workspace_dir: Optional[Path] = None
+
+COMMAND_TIMEOUT_SECONDS = 120
+
+
+def set_workspace(workspace: Optional[str] = None) -> Path:
+    """Set the workspace directory for agent tools.
+
+    Args:
+        workspace: Directory path. If None, uses cwd.
+
+    Returns:
+        The resolved workspace Path.
+    """
+    global _workspace_dir
+    if workspace:
+        _workspace_dir = Path(workspace).resolve()
+    else:
+        _workspace_dir = Path.cwd()
+    _workspace_dir.mkdir(parents=True, exist_ok=True)
+    return _workspace_dir
+
+
+def get_workspace() -> Path:
+    """Get the current workspace directory."""
+    if _workspace_dir is None:
+        return Path.cwd()
+    return _workspace_dir
+
+
 # Global storage for tool call arguments (for lifecycle hook access)
 _last_tool_args = {}
 _pending_tool_args = {}  # Args set before tool execution
@@ -530,9 +562,9 @@ def get_file_info(file_path: str) -> str:
 @function_tool
 def edit_file(file_path: str, old_str: str, new_str: str) -> str:
     """Edit a file by replacing exact text with new text.
-    
+
     IMPORTANT: This tool performs exact string matching including all whitespace and indentation.
-    
+
     Args:
         file_path: The path to the file to modify (relative or absolute)
         old_str: The exact text to find and replace. Must match EXACTLY including:
@@ -541,20 +573,20 @@ def edit_file(file_path: str, old_str: str, new_str: str) -> str:
                 - Indentation
                 Use the read_file tool first to get the exact text format.
         new_str: The new text to insert in place of old_str
-    
+
     Returns:
         'Successfully updated file' on success, or a detailed error message explaining:
         - If the file doesn't exist
         - If the old_str wasn't found (with hints about similar text)
         - If multiple matches were found (asks for more context)
         - Any permission or encoding issues
-    
+
     Example usage:
         1. First read the file to see exact formatting:
            read_file('config.py')
         2. Then edit with exact match:
            edit_file('config.py', 'DEBUG = False', 'DEBUG = True')
-    
+
     Common issues:
         - Spaces vs tabs: The text must match exactly
         - Line endings: Include \n if matching multiple lines
@@ -562,6 +594,64 @@ def edit_file(file_path: str, old_str: str, new_str: str) -> str:
     """
     capture_args("edit_file", file_path=file_path, old_str=old_str, new_str=new_str)
     return edit_file_raw(file_path, old_str, new_str)
+
+
+@function_tool
+async def run_command(command: str) -> str:
+    """Execute a shell command in the workspace directory and return its output.
+
+    Use this for: installing dependencies, running tests, building projects,
+    git operations, or any task that requires shell access.
+
+    Args:
+        command: The shell command to execute (e.g. "npm install", "python -m pytest")
+
+    Returns:
+        Combined stdout/stderr and exit code, or an error message on failure/timeout.
+    """
+    capture_args("run_command", command=command)
+    cwd = get_workspace()
+
+    if not cwd.exists():
+        return f"Error: Workspace directory does not exist: {cwd}"
+
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            command,
+            cwd=str(cwd),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=os.environ.copy(),
+        )
+
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=COMMAND_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.communicate()
+            return f"Error: Command timed out after {COMMAND_TIMEOUT_SECONDS}s: {command}"
+
+        stdout = stdout_bytes.decode("utf-8", errors="ignore")
+        stderr = stderr_bytes.decode("utf-8", errors="ignore")
+
+        parts = []
+        if stdout.strip():
+            parts.append(stdout.strip())
+        if stderr.strip():
+            parts.append(f"stderr:\n{stderr.strip()}")
+        parts.append(f"[exit_code: {proc.returncode}]")
+
+        result = "\n".join(parts)
+        # Truncate very long output to stay within token budget
+        if len(result) > 8000:
+            result = result[:4000] + "\n...(truncated)...\n" + result[-2000:]
+        return result
+
+    except Exception as e:
+        return f"Error executing command: {str(e)}"
 
 
 # Export all tools for the agent
@@ -577,5 +667,6 @@ def get_nano_agent_tools():
         write_file,
         list_directory,
         get_file_info,
-        edit_file
+        edit_file,
+        run_command,
     ]

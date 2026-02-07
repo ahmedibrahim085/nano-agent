@@ -27,6 +27,10 @@ class PromptNanoAgentRequest(BaseModel):
         default="openai",
         description="LLM provider for the agent"
     )
+    workspace: Optional[str] = Field(
+        default=None,
+        description="Working directory for the agent. Shell commands run here. Defaults to cwd."
+    )
 
 
 class PromptNanoAgentResponse(BaseModel):

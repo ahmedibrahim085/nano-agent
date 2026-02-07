@@ -60,7 +60,7 @@ ZAI_AVAILABLE_MODELS = ["glm-4.7", "glm-4.5-air"]
 # Agent Configuration
 MAX_AGENT_TURNS = 20  # Maximum turns in agent loop
 DEFAULT_TEMPERATURE = 0.2  # Temperature for agent responses
-MAX_TOKENS = 4000  # Maximum tokens per response
+MAX_TOKENS = 16000  # Maximum tokens per response
 
 # Tool Names
 TOOL_READ_FILE = "read_file"

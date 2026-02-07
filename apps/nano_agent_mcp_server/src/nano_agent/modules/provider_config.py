@@ -10,6 +10,7 @@ import os
 import logging
 from openai import AsyncOpenAI
 from agents import Agent, OpenAIChatCompletionsModel, ModelSettings, set_tracing_disabled
+from agents.extensions.models.litellm_model import LitellmModel
 import requests
 
 # Apply typing fixes for Python 3.12+ compatibility
@@ -114,7 +115,7 @@ class ProviderConfig:
             # Use OpenAI-compatible endpoint for Ollama
             logger.debug(f"Creating Ollama agent with model: {model}")
             ollama_client = AsyncOpenAI(
-                base_url="http://localhost:11434/v1",
+                base_url="http://127.0.0.1:11434/v1",
                 api_key="ollama"  # Dummy key required by client
             )
             return Agent(
@@ -127,7 +128,42 @@ class ProviderConfig:
                 ),
                 model_settings=model_settings
             )
-        
+
+        elif provider == "lmstudio":
+            # Use OpenAI-compatible endpoint for LM Studio
+            logger.debug(f"Creating LM Studio agent with model: {model}")
+            lmstudio_client = AsyncOpenAI(
+                base_url="http://127.0.0.1:1234/v1",
+                api_key="lm-studio"  # Dummy key required by client
+            )
+            return Agent(
+                name=name,
+                instructions=instructions,
+                tools=tools,
+                model=OpenAIChatCompletionsModel(
+                    model=model,
+                    openai_client=lmstudio_client
+                ),
+                model_settings=model_settings
+            )
+
+        elif provider == "zai":
+            # Z.ai uses Anthropic-compatible API — route via LiteLLM
+            from .constants import ZAI_BASE_URL
+            logger.debug(f"Creating Z.ai agent with model: {model}")
+            zai_model = LitellmModel(
+                model=f"anthropic/{model}",
+                base_url=ZAI_BASE_URL,
+                api_key=os.getenv("Z_AI_API_KEY")
+            )
+            return Agent(
+                name=name,
+                instructions=instructions,
+                tools=tools,
+                model=zai_model,
+                model_settings=model_settings
+            )
+
         else:
             raise ValueError(f"Unsupported provider: {provider}")
     
@@ -139,13 +175,10 @@ class ProviderConfig:
             provider: Provider name
         """
         if provider != "openai":
-            # Disable tracing for non-OpenAI providers by default
-            # unless an OpenAI key is available for tracing
-            if not os.getenv("OPENAI_API_KEY"):
-                logger.info(f"Disabling tracing for {provider} provider (no OpenAI API key for tracing)")
-                set_tracing_disabled(True)
-            else:
-                logger.debug(f"Tracing enabled for {provider} provider using OpenAI API key")
+            # Always disable OpenAI tracing/telemetry for non-OpenAI providers
+            # No need to send telemetry to OpenAI when using Ollama or Anthropic
+            logger.info(f"Disabling OpenAI tracing for {provider} provider")
+            set_tracing_disabled(True)
     
     @staticmethod
     def validate_provider_setup(provider: str, model: str, available_models: dict, provider_requirements: dict) -> tuple[bool, Optional[str]]:
@@ -161,30 +194,47 @@ class ProviderConfig:
             Tuple of (is_valid, error_message)
         """
         
-        # Check model availability
-        if provider not in available_models:
-            return False, f"Unknown provider: {provider}"
-        
-        if model not in available_models[provider]:
-            return False, f"Model {model} not available for {provider}. Available models: {', '.join(available_models[provider])}"
-        
+        # Local providers: dynamically validate against the running service
+        local_providers = {
+            "ollama": ("http://127.0.0.1:11434", "/api/tags", lambda d: [m["name"] for m in d.get("models", [])], "ollama serve"),
+            "lmstudio": ("http://127.0.0.1:1234", "/v1/models", lambda d: [m["id"] for m in d.get("data", [])], "LM Studio app"),
+        }
+
+        # Z.ai: validate against known model list
+        if provider == "zai":
+            from .constants import ZAI_AVAILABLE_MODELS
+            if model not in ZAI_AVAILABLE_MODELS:
+                return False, f"Model '{model}' not available for Z.ai. Available: {', '.join(ZAI_AVAILABLE_MODELS)}"
+            required_key = provider_requirements.get(provider)
+            if required_key and not os.getenv(required_key):
+                return False, f"Missing environment variable: {required_key}"
+            return True, None
+
+        if provider in local_providers:
+            base_url, endpoint, extract_models, start_hint = local_providers[provider]
+            try:
+                response = requests.get(f"{base_url}{endpoint}", timeout=3)
+                models = extract_models(response.json())
+                if model not in models:
+                    available = ", ".join(models[:10])
+                    hint = f" (showing first 10)" if len(models) > 10 else ""
+                    return False, f"Model '{model}' not found in {provider}. Available{hint}: {available}"
+            except requests.ConnectionError:
+                return False, f"{provider} service not running. Start with: {start_hint}"
+            except requests.Timeout:
+                return False, f"{provider} service timeout. Check if service is running"
+            except Exception as e:
+                return False, f"Error checking {provider} availability: {str(e)}"
+        elif provider in available_models:
+            # Cloud providers: check against static model list
+            if model not in available_models[provider]:
+                return False, f"Model {model} not available for {provider}. Available models: {', '.join(available_models[provider])}"
+        else:
+            return False, f"Unknown provider: {provider}. Available: {', '.join(list(available_models.keys()) + list(local_providers.keys()))}"
+
         # Check API keys
         required_key = provider_requirements.get(provider)
         if required_key and not os.getenv(required_key):
             return False, f"Missing environment variable: {required_key}"
-        
-        # Check Ollama availability
-        if provider == "ollama":
-            try:
-                response = requests.get("http://localhost:11434/api/tags", timeout=1)
-                models = [m["name"] for m in response.json().get("models", [])]
-                if model not in models:
-                    return False, f"Model {model} not pulled in Ollama. Run: ollama pull {model}"
-            except requests.ConnectionError:
-                return False, "Ollama service not running. Start with: ollama serve"
-            except requests.Timeout:
-                return False, "Ollama service timeout. Check if service is running: ollama serve"
-            except Exception as e:
-                return False, f"Error checking Ollama availability: {str(e)}"
-        
+
         return True, None

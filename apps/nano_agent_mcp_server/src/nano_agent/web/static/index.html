@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nano-Agent | Multi-Provider Agent Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        
+        .fade-in {
+            animation: fadeIn 0.3s ease-in-out;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        
+        .status-online { background-color: #10b981; box-shadow: 0 0 8px rgba(16, 185, 129, 0.5); }
+        .status-offline { background-color: #ef4444; box-shadow: 0 0 8px rgba(239, 68, 68, 0.5); }
+        .status-warning { background-color: #f59e0b; box-shadow: 0 0 8px rgba(245, 158, 11, 0.5); }
+        
+        .card-transition {
+            transition: all 0.3s ease;
+        }
+        
+        .card-transition:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+        }
+        
+        .table-row-hover:hover {
+            background-color: rgba(71, 85, 105, 0.3);
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-white min-h-screen flex flex-col">
+    <!-- Header -->
+    <header class="bg-slate-800 border-b border-slate-700 py-6 px-6">
+        <div class="container mx-auto">
+            <h1 class="text-3xl font-bold bg-gradient-to-r from-indigo-400 to-violet-400 bg-clip-text text-transparent">
+                Nano-Agent
+            </h1>
+            <p class="text-slate-400 mt-2">Multi-Provider Agent Dashboard</p>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-1 container mx-auto px-6 py-8">
+        <!-- Providers Section -->
+        <section class="mb-10 fade-in">
+            <h2 class="text-xl font-semibold mb-4 text-slate-200 flex items-center">
+                <span class="w-1 h-6 bg-indigo-500 rounded-full mr-3"></span>
+                Providers
+            </h2>
+            <div class="grid grid-cols-1 md:grid-cols-5 gap-4" id="providers-container">
+                <!-- Providers will be loaded here -->
+            </div>
+        </section>
+
+        <!-- Models Section -->
+        <section class="mb-10 fade-in">
+            <h2 class="text-xl font-semibold mb-4 text-slate-200 flex items-center">
+                <span class="w-1 h-6 bg-violet-500 rounded-full mr-3"></span>
+                Models
+            </h2>
+            
+            <!-- Search Filter -->
+            <div class="mb-4">
+                <input type="text" id="search-input" placeholder="Search models..." 
+                       class="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition">
+            </div>
+            
+            <!-- Models Table -->
+            <div class="overflow-x-auto bg-slate-800 rounded-lg border border-slate-700">
+                <table class="w-full text-left">
+                    <thead>
+                        <tr class="bg-slate-900 border-b border-slate-700">
+                            <th class="px-6 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider cursor-pointer hover:text-indigo-400 transition" onclick="sortModels('name')">
+                                Name
+                                <span class="ml-1 text-xs">↕</span>
+                            </th>
+                            <th class="px-6 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider cursor-pointer hover:text-indigo-400 transition" onclick="sortModels('provider')">
+                                Provider
+                                <span class="ml-1 text-xs">↕</span>
+                            </th>
+                            <th class="px-6 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider cursor-pointer hover:text-indigo-400 transition" onclick="sortModels('type')">
+                                Type
+                                <span class="ml-1 text-xs">↕</span>
+                            </th>
+                            <th class="px-6 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">Description</th>
+                            <th class="px-6 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider cursor-pointer hover:text-indigo-400 transition" onclick="sortModels('status')">
+                                Status
+                                <span class="ml-1 text-xs">↕</span>
+                            </th>
+                        </tr>
+                    </thead>
+                    <tbody id="models-table-body" class="divide-y divide-slate-700">
+                        <!-- Models will be loaded here -->
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Playground Section -->
+        <section class="fade-in">
+            <h2 class="text-xl font-semibold mb-4 text-slate-200 flex items-center">
+                <span class="w-1 h-6 bg-emerald-500 rounded-full mr-3"></span>
+                Playground
+            </h2>
+            
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- Left Panel -->
+                <div class="lg:col-span-1 bg-slate-800 rounded-lg border border-slate-700 p-6">
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-slate-400 mb-2">Prompt</label>
+                        <textarea id="prompt-input" rows="6" 
+                                  class="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition"
+                                  placeholder="Enter your prompt here..."></textarea>
+                    </div>
+                    
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-slate-400 mb-2">Provider</label>
+                        <select id="provider-select" 
+                                class="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition">
+                            <option value="">Select a provider</option>
+                        </select>
+                    </div>
+                    
+                    <div class="mb-6">
+                        <label class="block text-sm font-medium text-slate-400 mb-2">Model</label>
+                        <select id="model-select" 
+                                class="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition" disabled>
+                            <option value="">Select a model</option>
+                        </select>
+                    </div>
+                    
+                    <button id="run-button" 
+                            class="w-full bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white font-medium py-2 px-4 rounded-lg transition flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed">
+                        <span id="run-button-text">Run</span>
+                        <svg id="spinner" class="animate-spin -ml-1 mr-2 h-4 w-4 text-white hidden" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                    </button>
+                </div>
+                
+                <!-- Right Panel -->
+                <div class="lg:col-span-2 bg-slate-800 rounded-lg border border-slate-700 p-6">
+                    <h3 class="text-sm font-medium text-slate-400 mb-2">Result</h3>
+                    <div id="result-container" class="bg-slate-900 rounded-lg border border-slate-700 min-h-[200px] p-4">
+                        <div class="text-center text-slate-500 py-8">
+                            <svg class="mx-auto h-12 w-12 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v12a2 2 0 01-2 2h-5l-5 5v-5z"></path>
+                            </svg>
+                            <p class="mt-2">Run a prompt to see results</p>
+                        </div>
+                    </div>
+                    
+                    <!-- Metadata -->
+                    <div id="metadata-container" class="mt-4 hidden">
+                        <h3 class="text-sm font-medium text-slate-400 mb-2">Metadata</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div class="bg-slate-900 rounded-lg border border-slate-700 p-4">
+                                <p class="text-xs text-slate-500 uppercase tracking-wider">Execution Time</p>
+                                <p id="execution-time" class="text-lg font-medium mt-1">-</p>
+                            </div>
+                            <div class="bg-slate-900 rounded-lg border border-slate-700 p-4">
+                                <p class="text-xs text-slate-500 uppercase tracking-wider">Token Usage</p>
+                                <div class="mt-2 space-y-1">
+                                    <div class="flex justify-between text-sm">
+                                        <span class="text-slate-400">Total:</span>
+                                        <span id="total-tokens" class="font-medium">-</span>
+                                    </div>
+                                    <div class="flex justify-between text-sm">
+                                        <span class="text-slate-400">Input:</span>
+                                        <span id="input-tokens" class="font-medium">-</span>
+                                    </div>
+                                    <div class="flex justify-between text-sm">
+                                        <span class="text-slate-400">Output:</span>
+                                        <span id="output-tokens" class="font-medium">-</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-slate-800 border-t border-slate-700 py-4 px-6">
+        <div class="container mx-auto text-center">
+            <p class="text-slate-400">Nano-Agent v1.0 | Powered by OpenAI Agent SDK</p>
+        </div>
+    </footer>
+
+    <script>
+        // State
+        let providers = [];
+        let models = [];
+        let currentSort = { column: null, direction: 'asc' };
+        
+        // DOM Elements
+        const providersContainer = document.getElementById('providers-container');
+        const searchInput = document.getElementById('search-input');
+        const modelsTableBody = document.getElementById('models-table-body');
+        const providerSelect = document.getElementById('provider-select');
+        const modelSelect = document.getElementById('model-select');
+        const promptInput = document.getElementById('prompt-input');
+        const runButton = document.getElementById('run-button');
+        const runButtonText = document.getElementById('run-button-text');
+        const spinner = document.getElementById('spinner');
+        const resultContainer = document.getElementById('result-container');
+        const metadataContainer = document.getElementById('metadata-container');
+        
+        // Initialize
+        async function init() {
+            await loadProviders();
+            await loadModels();
+            populateProviderSelect();
+
+            // Auto-refresh every 30 seconds
+            setInterval(async () => {
+                await loadProviders();
+                await loadModels();
+                populateProviderSelect();
+            }, 30000);
+        }
+        
+        // Load Providers
+        async function loadProviders() {
+            try {
+                const response = await fetch('/api/providers');
+                if (!response.ok) throw new Error('Failed to load providers');
+                
+                const data = await response.json();
+                providers = data.providers || [];
+                
+                renderProviders();
+            } catch (error) {
+                console.error('Error loading providers:', error);
+                providersContainer.innerHTML = `
+                    <div class="col-span-5 text-center py-8 bg-slate-800 rounded-lg border border-red-500/30">
+                        <p class="text-red-400">Failed to load providers</p>
+                    </div>
+                `;
+            }
+        }
+        
+        // Render Providers
+        function renderProviders() {
+            const providerNames = ['ollama', 'lmstudio', 'openai', 'anthropic', 'zai'];
+            
+            providersContainer.innerHTML = providerNames.map(name => {
+                const provider = providers.find(p => p.name.toLowerCase() === name);
+                
+                if (!provider) {
+                    return `
+                        <div class="card-transition bg-slate-800 rounded-lg border border-slate-700 p-4">
+                            <div class="flex items-center justify-between mb-2">
+                                <h3 class="font-medium text-slate-300 capitalize">${name}</h3>
+                                <span class="status-dot status-offline" title="Offline"></span>
+                            </div>
+                            <p class="text-sm text-slate-500">Not available</p>
+                        </div>
+                    `;
+                }
+                
+                const statusClass = provider.status === 'online' ? 'status-online' : 
+                                   provider.status === 'offline' ? 'status-offline' : 'status-warning';
+                const badgeClass = provider.type === 'local' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 
+                                  'bg-indigo-500/20 text-indigo-400 border-indigo-500/30';
+                const badgeText = provider.type === 'local' ? 'Local' : 'Cloud';
+                
+                return `
+                    <div class="card-transition bg-slate-800 rounded-lg border border-slate-700 p-4 hover:border-indigo-500/50">
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="font-medium text-slate-200 capitalize">${provider.name}</h3>
+                            <span class="status-dot ${statusClass}" title="${provider.status}"></span>
+                        </div>
+                        
+                        <div class="space-y-2 text-sm">
+                            <div class="flex justify-between">
+                                <span class="text-slate-500">Latency</span>
+                                <span class="font-medium">${provider.latency_ms || 0}ms</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-slate-500">Models</span>
+                                <span class="font-medium">${provider.model_count || 0}</span>
+                            </div>
+                        </div>
+                        
+                        <div class="mt-3 pt-3 border-t border-slate-700">
+                            <span class="${badgeClass} px-2 py-1 rounded-full text-xs font-medium border">
+                                ${badgeText}
+                            </span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+        
+        // Load Models
+        async function loadModels() {
+            try {
+                const response = await fetch('/api/models');
+                if (!response.ok) throw new Error('Failed to load models');
+                
+                const data = await response.json();
+                models = data.models || [];
+                
+                renderModels(models);
+            } catch (error) {
+                console.error('Error loading models:', error);
+                modelsTableBody.innerHTML = `
+                    <tr>
+                        <td colspan="5" class="px-6 py-8 text-center text-red-400">
+                            Failed to load models
+                        </td>
+                    </tr>
+                `;
+            }
+        }
+        
+        // Render Models Table
+        function renderModels(modelsToRender = models) {
+            const searchTerm = searchInput.value.toLowerCase();
+            
+            const filteredModels = modelsToRender.filter(model => 
+                model.name.toLowerCase().includes(searchTerm) ||
+                model.provider.toLowerCase().includes(searchTerm) ||
+                model.type.toLowerCase().includes(searchTerm) ||
+                (model.description && model.description.toLowerCase().includes(searchTerm))
+            );
+            
+            modelsTableBody.innerHTML = filteredModels.map(model => {
+                const providerColor = getProviderColor(model.provider);
+                const statusClass = model.status === 'online' ? 'status-online' : 
+                                   model.status === 'offline' ? 'status-offline' : 'status-warning';
+                
+                return `
+                    <tr class="table-row-hover transition">
+                        <td class="px-6 py-4 whitespace-nowrap font-medium text-slate-200">${model.name}</td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <span class="${providerColor} px-2 py-1 rounded-full text-xs font-medium border">
+                                ${model.provider}
+                            </span>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-slate-300">${model.type}</td>
+                        <td class="px-6 py-4 text-slate-400">${model.description || '-'}</td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <div class="flex items-center">
+                                <span class="status-dot ${statusClass} mr-2" title="${model.status}"></span>
+                                <span class="text-sm capitalize">${model.status}</span>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+        
+        // Get provider color class
+        function getProviderColor(provider) {
+            const providerMap = {
+                'openai': 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30',
+                'anthropic': 'bg-violet-500/20 text-violet-400 border-violet-500/30',
+                'ollama': 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
+                'lmstudio': 'bg-blue-500/20 text-blue-400 border-blue-500/30',
+                'zai': 'bg-sky-500/20 text-sky-400 border-sky-500/30'
+            };
+            
+            return providerMap[provider.toLowerCase()] || 'bg-slate-500/20 text-slate-400 border-slate-500/30';
+        }
+        
+        // Sort Models
+        function sortModels(column) {
+            if (currentSort.column === column) {
+                currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+            } else {
+                currentSort.column = column;
+                currentSort.direction = 'asc';
+            }
+            
+            const sortedModels = [...models].sort((a, b) => {
+                let valueA = a[column];
+                let valueB = b[column];
+                
+                if (typeof valueA === 'string') {
+                    valueA = valueA.toLowerCase();
+                    valueB = valueB.toLowerCase();
+                }
+                
+                if (valueA < valueB) return currentSort.direction === 'asc' ? -1 : 1;
+                if (valueA > valueB) return currentSort.direction === 'asc' ? 1 : -1;
+                return 0;
+            });
+            
+            renderModels(sortedModels);
+        }
+        
+        // Search Filter Handler
+        searchInput.addEventListener('input', () => {
+            renderModels();
+        });
+        
+        // Provider Select Handler
+        providerSelect.addEventListener('change', () => {
+            const selectedProvider = providerSelect.value;
+            
+            if (selectedProvider) {
+                const filteredModels = models.filter(m => m.provider.toLowerCase() === selectedProvider.toLowerCase());
+                
+                modelSelect.innerHTML = '<option value="">Select a model</option>' +
+                    filteredModels.map(m => `<option value="${m.name}">${m.name}</option>`).join('');
+                modelSelect.disabled = filteredModels.length === 0;
+            } else {
+                modelSelect.innerHTML = '<option value="">Select a model</option>';
+                modelSelect.disabled = true;
+            }
+        });
+        
+        // Populate Provider Select (preserves current selection)
+        function populateProviderSelect() {
+            const current = providerSelect.value;
+            const uniqueProviders = [...new Set(models.map(m => m.provider))];
+            // Safe: provider names are from our own API, not user input
+            providerSelect.innerHTML = '<option value="">Select a provider</option>' +
+                uniqueProviders.map(p => `<option value="${p}"${p === current ? ' selected' : ''}>${p}</option>`).join('');
+        }
+        
+        // Run Button Handler
+        runButton.addEventListener('click', async () => {
+            const prompt = promptInput.value.trim();
+            const model = modelSelect.value;
+            const provider = providerSelect.value;
+            
+            if (!prompt || !model || !provider) {
+                resultContainer.innerHTML = `
+                    <div class="text-center text-red-400 py-8">
+                        Please fill in all fields
+                    </div>
+                `;
+                return;
+            }
+            
+            // Show loading state
+            runButton.disabled = true;
+            runButtonText.textContent = 'Running...';
+            spinner.classList.remove('hidden');
+            resultContainer.innerHTML = `
+                <div class="text-center py-8">
+                    <svg class="mx-auto h-12 w-12 text-indigo-500 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <p class="mt-3 text-indigo-400">Running prompt...</p>
+                </div>
+            `;
+            metadataContainer.classList.add('hidden');
+            
+            try {
+                const response = await fetch('/api/run', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt, model, provider })
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || 'Failed to run prompt');
+                }
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    displayResult(data);
+                } else {
+                    throw new Error(data.error || 'Failed to run prompt');
+                }
+            } catch (error) {
+                resultContainer.innerHTML = `
+                    <div class="text-center text-red-400 py-8">
+                        <svg class="mx-auto h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                        <p class="mt-3">${error.message}</p>
+                    </div>
+                `;
+            } finally {
+                runButton.disabled = false;
+                runButtonText.textContent = 'Run';
+                spinner.classList.add('hidden');
+            }
+        });
+        
+        // Display Result
+        function displayResult(data) {
+            const metadata = data.metadata || {};
+            
+            resultContainer.innerHTML = `
+                <div class="bg-slate-900 rounded-lg border border-slate-700 p-4">
+                    <pre class="whitespace-pre-wrap text-sm font-mono text-slate-300">${data.result || 'No result returned'}</pre>
+                </div>
+            `;
+            
+            metadataContainer.classList.remove('hidden');
+            
+            if (metadata) {
+                document.getElementById('execution-time').textContent =
+                    `${(data.execution_time_seconds || 0).toFixed(3)}s`;
+                document.getElementById('total-tokens').textContent = 
+                    metadata.token_usage?.total_tokens || '-';
+                document.getElementById('input-tokens').textContent = 
+                    metadata.token_usage?.input_tokens || '-';
+                document.getElementById('output-tokens').textContent = 
+                    metadata.token_usage?.output_tokens || '-';
+            }
+        }
+        
+        // Initialize on load
+        window.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>

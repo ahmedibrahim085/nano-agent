@@ -18,7 +18,13 @@ AVAILABLE_MODELS = {
         "claude-sonnet-4-20250514",
         "claude-3-haiku-20240307",
     ],
-    "ollama": ["gpt-oss:20b", "gpt-oss:120b"],
+    "ollama": [
+        "gpt-oss:20b",
+        "gpt-oss:120b",
+        "qwen3-coder:30b",
+        "gemma3:27b",
+        "magistral:latest",
+    ],
 }
 
 # Model Display Names and Descriptions
@@ -33,6 +39,9 @@ MODEL_INFO = {
     "claude-3-haiku-20240307": "Claude 3 Haiku - Fast and efficient",
     "gpt-oss:20b": "GPT-OSS 20B - Local open-source model",
     "gpt-oss:120b": "GPT-OSS 120B - Large local model",
+    "qwen3-coder:30b": "Qwen3 Coder 30B - Local coding specialist",
+    "gemma3:27b": "Gemma3 27B - Google's local model",
+    "magistral:latest": "Magistral 24B - Local reasoning model",
 }
 
 # Provider API Key Requirements
@@ -40,7 +49,13 @@ PROVIDER_REQUIREMENTS = {
     "openai": "OPENAI_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
     "ollama": None,  # No API key needed
+    "lmstudio": None,  # No API key needed
+    "zai": "Z_AI_API_KEY",  # Z.ai API key
 }
+
+# Z.ai Configuration
+ZAI_BASE_URL = "https://api.z.ai/api/anthropic"
+ZAI_AVAILABLE_MODELS = ["glm-4.7", "glm-4.5-air"]
 
 # Agent Configuration
 MAX_AGENT_TURNS = 20  # Maximum turns in agent loop

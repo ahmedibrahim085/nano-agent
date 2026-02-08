@@ -174,15 +174,10 @@ class ProviderConfig:
         Args:
             provider: Provider name
         """
-        if provider != "openai":
-            # Always disable OpenAI tracing/telemetry for non-OpenAI providers
-            # No need to send telemetry to OpenAI when using Ollama or Anthropic
-            logger.info(f"Disabling OpenAI tracing for {provider} provider")
-            set_tracing_disabled(True)
-        else:
-            # Re-enable tracing for OpenAI provider
-            logger.info(f"Enabling OpenAI tracing for {provider} provider")
-            set_tracing_disabled(False)
+        # Disable tracing globally — it's a process-wide singleton that causes
+        # race conditions when multiple agents with different providers run
+        # concurrently. Disabling unconditionally eliminates the race.
+        set_tracing_disabled(True)
     
     @staticmethod
     def validate_provider_setup(provider: str, model: str, available_models: dict, provider_requirements: dict) -> tuple[bool, Optional[str]]:

@@ -147,34 +147,16 @@ def _is_tracing_disabled() -> bool:
 
 
 @pytest.mark.asyncio
-async def test_tracing_restore():
-    """Test that setup_provider correctly toggles tracing state.
+async def test_tracing_always_disabled():
+    """Tracing is disabled globally to avoid race conditions.
 
-    This test proves Bug 3: set_tracing_disabled() is never restored.
-    When Agent A uses OpenAI (tracing ON), then Agent B uses Ollama (tracing OFF),
-    Agent A's tracing gets disabled mid-run.
-
-    After fix, each provider setup should explicitly set tracing state.
+    set_tracing_disabled() is a process-wide singleton. Toggling it per-provider
+    causes races when agents with different providers run concurrently.
+    Fix: disable unconditionally for all providers.
     """
-    # Start with OpenAI (tracing enabled)
-    ProviderConfig.setup_provider("openai")
-    assert _is_tracing_disabled() == False, "OpenAI should enable tracing"
-
-    # Switch to Ollama (tracing disabled)
-    ProviderConfig.setup_provider("ollama")
-    assert _is_tracing_disabled() == True, "Ollama should disable tracing"
-
-    # Switch back to OpenAI (tracing should be re-enabled)
-    ProviderConfig.setup_provider("openai")
-    assert _is_tracing_disabled() == False, "OpenAI should re-enable tracing after Ollama"
-
-    # Test with Z.ai (also should disable tracing)
-    ProviderConfig.setup_provider("zai")
-    assert _is_tracing_disabled() == True, "Z.ai should disable tracing"
-
-    # And back to OpenAI one more time
-    ProviderConfig.setup_provider("openai")
-    assert _is_tracing_disabled() == False, "OpenAI should re-enable tracing after Z.ai"
+    for provider in ("openai", "ollama", "zai", "anthropic"):
+        ProviderConfig.setup_provider(provider)
+        assert _is_tracing_disabled() == True, f"Tracing should be disabled for {provider}"
 
 
 @pytest.mark.asyncio

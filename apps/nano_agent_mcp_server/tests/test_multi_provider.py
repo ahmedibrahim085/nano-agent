@@ -202,13 +202,15 @@ class TestProviderConfig:
             ProviderConfig.setup_provider("anthropic")
             mock_disable.assert_called_once_with(True)
     
-    def test_setup_provider_keeps_tracing_with_openai_key(self):
-        """Test that tracing is kept when OpenAI key exists for non-OpenAI providers."""
-        with patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'}), \
-             patch('nano_agent.modules.provider_config.set_tracing_disabled') as mock_disable:
-            
-            ProviderConfig.setup_provider("anthropic")
-            mock_disable.assert_not_called()
+    def test_setup_provider_enables_tracing_for_openai(self):
+        """Test that tracing is explicitly enabled for OpenAI provider.
+
+        This test verifies Bug 3 fix: tracing state must be explicitly set
+        for each provider to avoid race conditions in concurrent environments.
+        """
+        with patch('nano_agent.modules.provider_config.set_tracing_disabled') as mock_disable:
+            ProviderConfig.setup_provider("openai")
+            mock_disable.assert_called_once_with(False)
 
 
 if __name__ == "__main__":

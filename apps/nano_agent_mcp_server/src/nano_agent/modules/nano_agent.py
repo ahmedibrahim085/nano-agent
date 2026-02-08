@@ -186,11 +186,12 @@ class RichLoggingHooks(RunHooksBase):
         # Try to get the captured arguments from our tools module
         tool_args = {}
         try:
-            from .nano_agent_tools import _last_tool_args
-            if tool_name in _last_tool_args:
-                tool_args = _last_tool_args[tool_name]
+            from .nano_agent_tools import _last_tool_args_var
+            last = _last_tool_args_var.get()
+            if last is not None and tool_name in last:
+                tool_args = last[tool_name]
                 # Clear after use to avoid showing stale args
-                del _last_tool_args[tool_name]
+                del last[tool_name]
         except:
             pass
         
@@ -290,26 +291,26 @@ class RichLoggingHooks(RunHooksBase):
 async def _execute_nano_agent_async(request: PromptNanoAgentRequest, enable_rich_logging: bool = True) -> PromptNanoAgentResponse:
     """
     Execute the nano agent using OpenAI Agent SDK (async version).
-    
+
     This method uses the OpenAI Agent SDK for a robust agent experience
     with better tool handling and conversation management.
-    
+
     Args:
         request: The validated request containing prompt and configuration
         enable_rich_logging: Whether to enable rich console logging for tool calls
-        
+
     Returns:
         Response with execution results or error information
     """
     start_time = time.time()
-    
+
     try:
         logger.info(f"Executing nano agent with Agent SDK: {request.agentic_prompt[:100]}...")
         logger.debug(f"Model: {request.model}, Provider: {request.provider}")
-        
-        # Validate provider and model combination
-        is_valid, error_msg = ProviderConfig.validate_provider_setup(
-            request.provider, 
+
+        # Validate provider and model combination (async to avoid blocking event loop)
+        is_valid, error_msg = await ProviderConfig.validate_provider_setup_async(
+            request.provider,
             request.model,
             AVAILABLE_MODELS,
             PROVIDER_REQUIREMENTS

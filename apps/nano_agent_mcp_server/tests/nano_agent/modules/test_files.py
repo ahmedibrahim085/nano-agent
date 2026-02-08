@@ -249,3 +249,44 @@ class TestIntegration:
         assert "absolute_path" in info
         assert info["path"] == "info_test.txt"  # Relative display
         assert Path(info["absolute_path"]).is_absolute()  # Absolute path
+
+
+class TestResolvePathWithWorkspace:
+    """Test that resolve_path uses workspace when set."""
+
+    def test_resolve_relative_path_with_workspace(self, tmp_path):
+        """Relative paths should resolve from workspace, not cwd."""
+        from nano_agent.modules.nano_agent_tools import set_workspace, _workspace_dir_var
+
+        workspace = tmp_path / "my_workspace"
+        workspace.mkdir()
+
+        set_workspace(str(workspace))
+
+        try:
+            resolved = resolve_path("src/main.py")
+            assert resolved == (workspace / "src" / "main.py").resolve()
+        finally:
+            _workspace_dir_var.set(None)
+
+    def test_resolve_absolute_path_ignores_workspace(self, tmp_path):
+        """Absolute paths should not be affected by workspace."""
+        from nano_agent.modules.nano_agent_tools import set_workspace, _workspace_dir_var
+
+        set_workspace(str(tmp_path))
+
+        try:
+            abs_path = Path("/tmp/absolute/file.txt")
+            resolved = resolve_path(str(abs_path))
+            assert resolved == abs_path.resolve()
+        finally:
+            _workspace_dir_var.set(None)
+
+    def test_resolve_path_no_workspace_uses_cwd(self):
+        """Without workspace set, should fall back to cwd."""
+        from nano_agent.modules.nano_agent_tools import _workspace_dir_var
+
+        _workspace_dir_var.set(None)
+
+        resolved = resolve_path("test.txt")
+        assert resolved == (Path.cwd() / "test.txt").resolve()

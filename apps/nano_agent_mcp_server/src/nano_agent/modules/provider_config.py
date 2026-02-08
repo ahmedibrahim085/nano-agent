@@ -170,7 +170,7 @@ class ProviderConfig:
     @staticmethod
     def setup_provider(provider: str) -> None:
         """Setup provider-specific configurations.
-        
+
         Args:
             provider: Provider name
         """
@@ -179,6 +179,10 @@ class ProviderConfig:
             # No need to send telemetry to OpenAI when using Ollama or Anthropic
             logger.info(f"Disabling OpenAI tracing for {provider} provider")
             set_tracing_disabled(True)
+        else:
+            # Re-enable tracing for OpenAI provider
+            logger.info(f"Enabling OpenAI tracing for {provider} provider")
+            set_tracing_disabled(False)
     
     @staticmethod
     def validate_provider_setup(provider: str, model: str, available_models: dict, provider_requirements: dict) -> tuple[bool, Optional[str]]:
@@ -233,6 +237,63 @@ class ProviderConfig:
             return False, f"Unknown provider: {provider}. Available: {', '.join(list(available_models.keys()) + list(local_providers.keys()))}"
 
         # Check API keys
+        required_key = provider_requirements.get(provider)
+        if required_key and not os.getenv(required_key):
+            return False, f"Missing environment variable: {required_key}"
+
+        return True, None
+
+    @staticmethod
+    async def validate_provider_setup_async(provider: str, model: str, available_models: dict, provider_requirements: dict) -> tuple[bool, Optional[str]]:
+        """Async version of validate_provider_setup. Uses httpx instead of requests.
+
+        Args:
+            provider: Provider name
+            model: Model identifier
+            available_models: Dictionary of available models per provider
+            provider_requirements: Dictionary of API key requirements
+
+        Returns:
+            Tuple of (is_valid, error_message)
+        """
+        import httpx
+
+        local_providers = {
+            "ollama": ("http://127.0.0.1:11434", "/api/tags", lambda d: [m["name"] for m in d.get("models", [])], "ollama serve"),
+            "lmstudio": ("http://127.0.0.1:1234", "/v1/models", lambda d: [m["id"] for m in d.get("data", [])], "LM Studio app"),
+        }
+
+        if provider == "zai":
+            from .constants import ZAI_AVAILABLE_MODELS
+            if model not in ZAI_AVAILABLE_MODELS:
+                return False, f"Model '{model}' not available for Z.ai. Available: {', '.join(ZAI_AVAILABLE_MODELS)}"
+            required_key = provider_requirements.get(provider)
+            if required_key and not os.getenv(required_key):
+                return False, f"Missing environment variable: {required_key}"
+            return True, None
+
+        if provider in local_providers:
+            base_url, endpoint, extract_models, start_hint = local_providers[provider]
+            try:
+                async with httpx.AsyncClient(timeout=3.0) as client:
+                    response = await client.get(f"{base_url}{endpoint}")
+                models = extract_models(response.json())
+                if model not in models:
+                    available = ", ".join(models[:10])
+                    hint = f" (showing first 10)" if len(models) > 10 else ""
+                    return False, f"Model '{model}' not found in {provider}. Available{hint}: {available}"
+            except httpx.ConnectError:
+                return False, f"{provider} service not running. Start with: {start_hint}"
+            except httpx.TimeoutException:
+                return False, f"{provider} service timeout. Check if service is running"
+            except Exception as e:
+                return False, f"Error checking {provider} availability: {str(e)}"
+        elif provider in available_models:
+            if model not in available_models[provider]:
+                return False, f"Model {model} not available for {provider}. Available models: {', '.join(available_models[provider])}"
+        else:
+            return False, f"Unknown provider: {provider}. Available: {', '.join(list(available_models.keys()) + list(local_providers.keys()))}"
+
         required_key = provider_requirements.get(provider)
         if required_key and not os.getenv(required_key):
             return False, f"Missing environment variable: {required_key}"

@@ -30,8 +30,13 @@ def resolve_path(path_input: Union[str, Path]) -> Path:
         # Already absolute, just resolve to handle .. and symlinks
         return path.resolve()
     else:
-        # Relative path - resolve relative to current working directory
-        return (Path.cwd() / path).resolve()
+        # Relative path - resolve relative to workspace (or cwd if no workspace set)
+        try:
+            from .nano_agent_tools import get_workspace
+            base = get_workspace()
+        except ImportError:
+            base = Path.cwd()
+        return (base / path).resolve()
 
 
 def get_working_directory() -> Path:

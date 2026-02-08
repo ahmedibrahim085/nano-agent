@@ -9,6 +9,7 @@ available to the agent during execution.
 import asyncio
 import os
 import logging
+import contextvars
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, Any
@@ -490,7 +491,19 @@ def get_file_metadata(file_path: str) -> Optional[Dict[str, Any]]:
 
 
 # Workspace directory for agent operations (set per-invocation)
-_workspace_dir: Optional[Path] = None
+# Using ContextVar for async-safe per-task isolation
+_workspace_dir_var: contextvars.ContextVar[Optional[Path]] = contextvars.ContextVar(
+    '_workspace_dir', default=None
+)
+
+# Tool call arguments storage (for lifecycle hook access)
+# Using ContextVar for async-safe per-task isolation
+_last_tool_args_var: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
+    '_last_tool_args', default=None
+)
+_pending_tool_args_var: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
+    '_pending_tool_args', default=None
+)
 
 COMMAND_TIMEOUT_SECONDS = 120
 
@@ -504,31 +517,38 @@ def set_workspace(workspace: Optional[str] = None) -> Path:
     Returns:
         The resolved workspace Path.
     """
-    global _workspace_dir
     if workspace:
-        _workspace_dir = Path(workspace).resolve()
+        ws = Path(workspace).resolve()
     else:
-        _workspace_dir = Path.cwd()
-    _workspace_dir.mkdir(parents=True, exist_ok=True)
-    return _workspace_dir
+        ws = Path.cwd()
+    ws.mkdir(parents=True, exist_ok=True)
+    _workspace_dir_var.set(ws)
+    return ws
 
 
 def get_workspace() -> Path:
     """Get the current workspace directory."""
-    if _workspace_dir is None:
+    ws = _workspace_dir_var.get()
+    if ws is None:
         return Path.cwd()
-    return _workspace_dir
+    return ws
 
-
-# Global storage for tool call arguments (for lifecycle hook access)
-_last_tool_args = {}
-_pending_tool_args = {}  # Args set before tool execution
 
 def capture_args(tool_name: str, **kwargs):
     """Capture tool arguments for lifecycle hooks."""
-    global _last_tool_args, _pending_tool_args
-    _last_tool_args[tool_name] = kwargs
-    _pending_tool_args[tool_name] = kwargs
+    # Get or create the dicts for this context
+    last = _last_tool_args_var.get()
+    if last is None:
+        last = {}
+        _last_tool_args_var.set(last)
+
+    pending = _pending_tool_args_var.get()
+    if pending is None:
+        pending = {}
+        _pending_tool_args_var.set(pending)
+
+    last[tool_name] = kwargs
+    pending[tool_name] = kwargs
     logger.debug(f"Captured args for {tool_name}: {kwargs}")
 
 # Decorated tool functions for OpenAI Agent SDK

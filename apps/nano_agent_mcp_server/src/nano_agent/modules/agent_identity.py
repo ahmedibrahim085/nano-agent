@@ -37,8 +37,11 @@ def read_agent_instructions(agent_path: str) -> str:
         content = agent_file.read_text(encoding="utf-8")
     except OSError as e:
         raise ValueError(f"Failed to read AGENT.md: {e}")
+    content = content.strip()
+    if not content:
+        raise ValueError(f"AGENT.md is empty in: {agent_path}")
     logger.debug(f"Read agent instructions from {agent_file} ({len(content)} chars)")
-    return content.strip()
+    return content
 
 
 def build_layered_prompt(agent_instructions: str, agent_path: str, workspace: str | None) -> str:

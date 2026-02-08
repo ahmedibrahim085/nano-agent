@@ -5,6 +5,7 @@ Tests read_agent_instructions() and build_layered_prompt() functions
 for the launch_agent MCP tool (US-010).
 """
 
+import sys
 import pytest
 from pathlib import Path
 from nano_agent.modules.agent_identity import read_agent_instructions, build_layered_prompt
@@ -53,6 +54,15 @@ class TestReadAgentInstructions:
 
         with pytest.raises(ValueError, match="AGENT.md not found"):
             read_agent_instructions(str(empty_dir))
+
+    def test_empty_agent_md(self, tmp_path):
+        """Raise ValueError when AGENT.md exists but is empty after stripping."""
+        agent_dir = tmp_path / "empty-agent"
+        agent_dir.mkdir()
+        (agent_dir / "AGENT.md").write_text("   \n\n  \n  ", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="AGENT.md is empty"):
+            read_agent_instructions(str(agent_dir))
 
     def test_unicode_content(self, tmp_path):
         """Handle Unicode content in AGENT.md correctly."""
@@ -156,6 +166,7 @@ class TestBuildLayeredPrompt:
 
         assert "Workspace directory:" not in result
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="chmod doesn't restrict reads on Windows")
     def test_workspace_agent_md_read_error(self, tmp_path):
         """Graceful skip when workspace AGENT.md cannot be read."""
         workspace = tmp_path / "unreadable-project"

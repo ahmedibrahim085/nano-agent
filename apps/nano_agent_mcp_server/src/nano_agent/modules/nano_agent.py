@@ -288,7 +288,7 @@ class RichLoggingHooks(RunHooksBase):
             ))
 
 
-async def _execute_nano_agent_async(request: PromptNanoAgentRequest, enable_rich_logging: bool = True) -> PromptNanoAgentResponse:
+async def _execute_nano_agent_async(request: PromptNanoAgentRequest, enable_rich_logging: bool = True, instructions_override: str | None = None) -> PromptNanoAgentResponse:
     """
     Execute the nano agent using OpenAI Agent SDK (async version).
 
@@ -298,6 +298,9 @@ async def _execute_nano_agent_async(request: PromptNanoAgentRequest, enable_rich
     Args:
         request: The validated request containing prompt and configuration
         enable_rich_logging: Whether to enable rich console logging for tool calls
+        instructions_override: Optional custom instructions to use instead of the default
+            NANO_AGENT_SYSTEM_PROMPT. When set, this string replaces the base prompt.
+            Used by launch_agent() to inject layered agent identity instructions.
 
     Returns:
         Response with execution results or error information
@@ -346,7 +349,10 @@ async def _execute_nano_agent_async(request: PromptNanoAgentRequest, enable_rich
         )
 
         # Build instructions with workspace context
-        instructions = NANO_AGENT_SYSTEM_PROMPT + f"\n\nWorkspace directory: {workspace_path}\n"
+        if instructions_override:
+            instructions = instructions_override + f"\n\nWorkspace directory: {workspace_path}\n"
+        else:
+            instructions = NANO_AGENT_SYSTEM_PROMPT + f"\n\nWorkspace directory: {workspace_path}\n"
 
         # Create agent using the provider configuration
         agent = ProviderConfig.create_agent(
@@ -428,7 +434,7 @@ async def _execute_nano_agent_async(request: PromptNanoAgentRequest, enable_rich
         )
 
 
-def _execute_nano_agent(request: PromptNanoAgentRequest, enable_rich_logging: bool = True) -> PromptNanoAgentResponse:
+def _execute_nano_agent(request: PromptNanoAgentRequest, enable_rich_logging: bool = True, instructions_override: str | None = None) -> PromptNanoAgentResponse:
     """
     Execute the nano agent using OpenAI Agent SDK.
     
@@ -438,6 +444,9 @@ def _execute_nano_agent(request: PromptNanoAgentRequest, enable_rich_logging: bo
     Args:
         request: The validated request containing prompt and configuration
         enable_rich_logging: Whether to enable rich console logging for tool calls
+        instructions_override: Optional custom instructions to use instead of the default
+            NANO_AGENT_SYSTEM_PROMPT. When set, this string replaces the base prompt.
+            Used by launch_agent() to inject layered agent identity instructions.
         
     Returns:
         Response with execution results or error information
@@ -483,7 +492,10 @@ def _execute_nano_agent(request: PromptNanoAgentRequest, enable_rich_logging: bo
         )
 
         # Build instructions with workspace context
-        instructions = NANO_AGENT_SYSTEM_PROMPT + f"\n\nWorkspace directory: {workspace_path}\n"
+        if instructions_override:
+            instructions = instructions_override + f"\n\nWorkspace directory: {workspace_path}\n"
+        else:
+            instructions = NANO_AGENT_SYSTEM_PROMPT + f"\n\nWorkspace directory: {workspace_path}\n"
 
         # Create agent with provider-specific configuration
         agent = ProviderConfig.create_agent(

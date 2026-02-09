@@ -8,15 +8,28 @@ with different model providers (OpenAI, Anthropic, Ollama).
 from typing import Optional, Union
 import os
 import logging
+import time
+import asyncio
 from openai import AsyncOpenAI
 from agents import Agent, OpenAIChatCompletionsModel, ModelSettings, set_tracing_disabled
 from agents.extensions.models.litellm_model import LitellmModel
 import requests
+import httpx
 
 # Apply typing fixes for Python 3.12+ compatibility
 from . import typing_fix
 
+# Import data types for health check
+from .data_types import ProviderHealthStatus, CheckProvidersResponse
+from .constants import AVAILABLE_MODELS, ZAI_AVAILABLE_MODELS
+
 logger = logging.getLogger(__name__)
+
+# Shared config for local providers: (base_url, endpoint, model_extractor, start_hint)
+LOCAL_PROVIDER_CONFIG = {
+    "ollama": ("http://127.0.0.1:11434", "/api/tags", lambda d: [m["name"] for m in d.get("models", [])], "ollama serve"),
+    "lmstudio": ("http://127.0.0.1:1234", "/v1/models", lambda d: [m["id"] for m in d.get("data", [])], "LM Studio app"),
+}
 
 
 class ProviderConfig:
@@ -193,15 +206,8 @@ class ProviderConfig:
             Tuple of (is_valid, error_message)
         """
         
-        # Local providers: dynamically validate against the running service
-        local_providers = {
-            "ollama": ("http://127.0.0.1:11434", "/api/tags", lambda d: [m["name"] for m in d.get("models", [])], "ollama serve"),
-            "lmstudio": ("http://127.0.0.1:1234", "/v1/models", lambda d: [m["id"] for m in d.get("data", [])], "LM Studio app"),
-        }
-
         # Z.ai: validate against known model list
         if provider == "zai":
-            from .constants import ZAI_AVAILABLE_MODELS
             if model not in ZAI_AVAILABLE_MODELS:
                 return False, f"Model '{model}' not available for Z.ai. Available: {', '.join(ZAI_AVAILABLE_MODELS)}"
             required_key = provider_requirements.get(provider)
@@ -209,8 +215,8 @@ class ProviderConfig:
                 return False, f"Missing environment variable: {required_key}"
             return True, None
 
-        if provider in local_providers:
-            base_url, endpoint, extract_models, start_hint = local_providers[provider]
+        if provider in LOCAL_PROVIDER_CONFIG:
+            base_url, endpoint, extract_models, start_hint = LOCAL_PROVIDER_CONFIG[provider]
             try:
                 response = requests.get(f"{base_url}{endpoint}", timeout=3)
                 models = extract_models(response.json())
@@ -229,7 +235,7 @@ class ProviderConfig:
             if model not in available_models[provider]:
                 return False, f"Model {model} not available for {provider}. Available models: {', '.join(available_models[provider])}"
         else:
-            return False, f"Unknown provider: {provider}. Available: {', '.join(list(available_models.keys()) + list(local_providers.keys()))}"
+            return False, f"Unknown provider: {provider}. Available: {', '.join(list(available_models.keys()) + list(LOCAL_PROVIDER_CONFIG.keys()))}"
 
         # Check API keys
         required_key = provider_requirements.get(provider)
@@ -251,15 +257,7 @@ class ProviderConfig:
         Returns:
             Tuple of (is_valid, error_message)
         """
-        import httpx
-
-        local_providers = {
-            "ollama": ("http://127.0.0.1:11434", "/api/tags", lambda d: [m["name"] for m in d.get("models", [])], "ollama serve"),
-            "lmstudio": ("http://127.0.0.1:1234", "/v1/models", lambda d: [m["id"] for m in d.get("data", [])], "LM Studio app"),
-        }
-
         if provider == "zai":
-            from .constants import ZAI_AVAILABLE_MODELS
             if model not in ZAI_AVAILABLE_MODELS:
                 return False, f"Model '{model}' not available for Z.ai. Available: {', '.join(ZAI_AVAILABLE_MODELS)}"
             required_key = provider_requirements.get(provider)
@@ -267,8 +265,8 @@ class ProviderConfig:
                 return False, f"Missing environment variable: {required_key}"
             return True, None
 
-        if provider in local_providers:
-            base_url, endpoint, extract_models, start_hint = local_providers[provider]
+        if provider in LOCAL_PROVIDER_CONFIG:
+            base_url, endpoint, extract_models, start_hint = LOCAL_PROVIDER_CONFIG[provider]
             try:
                 async with httpx.AsyncClient(timeout=3.0) as client:
                     response = await client.get(f"{base_url}{endpoint}")
@@ -287,10 +285,294 @@ class ProviderConfig:
             if model not in available_models[provider]:
                 return False, f"Model {model} not available for {provider}. Available models: {', '.join(available_models[provider])}"
         else:
-            return False, f"Unknown provider: {provider}. Available: {', '.join(list(available_models.keys()) + list(local_providers.keys()))}"
+            return False, f"Unknown provider: {provider}. Available: {', '.join(list(available_models.keys()) + list(LOCAL_PROVIDER_CONFIG.keys()))}"
 
         required_key = provider_requirements.get(provider)
         if required_key and not os.getenv(required_key):
             return False, f"Missing environment variable: {required_key}"
 
         return True, None
+
+
+async def _check_provider_health(provider: str) -> ProviderHealthStatus:
+    """Check health of a single provider.
+
+    Args:
+        provider: Provider name (openai, anthropic, ollama, lmstudio, zai)
+
+    Returns:
+        ProviderHealthStatus with status, models, latency, and error
+    """
+    start_time = time.perf_counter()
+
+    try:
+        # OpenAI: API key check + authenticated GET /v1/models
+        if provider == "openai":
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                return ProviderHealthStatus(
+                    status="down",
+                    available_models=[],
+                    error="Missing environment variable: OPENAI_API_KEY"
+                )
+
+            try:
+                async with httpx.AsyncClient(timeout=3.0) as client:
+                    response = await client.get(
+                        "https://api.openai.com/v1/models",
+                        headers={"Authorization": f"Bearer {api_key}"}
+                    )
+
+                latency_ms = (time.perf_counter() - start_time) * 1000
+
+                if response.status_code == 200:
+                    # Parse model list from response
+                    try:
+                        data = response.json()
+                        models = [m["id"] for m in data.get("data", [])]
+                        return ProviderHealthStatus(
+                            status="up",
+                            available_models=models,
+                            latency_ms=latency_ms
+                        )
+                    except Exception as e:
+                        return ProviderHealthStatus(
+                            status="down",
+                            available_models=[],
+                            latency_ms=latency_ms,
+                            error=f"Error parsing response: {str(e)}"
+                        )
+                elif response.status_code in (401, 403):
+                    return ProviderHealthStatus(
+                        status="down",
+                        available_models=[],
+                        latency_ms=latency_ms,
+                        error="API key invalid"
+                    )
+                else:
+                    return ProviderHealthStatus(
+                        status="down",
+                        available_models=[],
+                        latency_ms=latency_ms,
+                        error=f"Unexpected status code: {response.status_code}"
+                    )
+
+            except httpx.ConnectError:
+                return ProviderHealthStatus(
+                    status="down",
+                    available_models=[],
+                    error="endpoint unreachable"
+                )
+            except httpx.TimeoutException:
+                return ProviderHealthStatus(
+                    status="down",
+                    available_models=[],
+                    error="openai endpoint timeout"
+                )
+            except Exception as e:
+                return ProviderHealthStatus(
+                    status="down",
+                    available_models=[],
+                    error=f"Error checking openai: {str(e)}"
+                )
+
+        # Anthropic: API key check only (no models endpoint)
+        elif provider == "anthropic":
+            api_key = os.getenv("ANTHROPIC_API_KEY")
+            if not api_key:
+                return ProviderHealthStatus(
+                    status="down",
+                    available_models=[],
+                    error="Missing environment variable: ANTHROPIC_API_KEY"
+                )
+
+            # Return static model list from constants
+            latency_ms = (time.perf_counter() - start_time) * 1000
+            return ProviderHealthStatus(
+                status="up",
+                available_models=AVAILABLE_MODELS.get("anthropic", []),
+                latency_ms=latency_ms
+            )
+
+        # Z.ai: API key check only (no models endpoint)
+        elif provider == "zai":
+            api_key = os.getenv("Z_AI_API_KEY")
+            if not api_key:
+                return ProviderHealthStatus(
+                    status="down",
+                    available_models=[],
+                    error="Missing environment variable: Z_AI_API_KEY"
+                )
+
+            # Return static model list from constants
+            latency_ms = (time.perf_counter() - start_time) * 1000
+            return ProviderHealthStatus(
+                status="up",
+                available_models=ZAI_AVAILABLE_MODELS,
+                latency_ms=latency_ms
+            )
+
+        # Ollama: Service running check + model list
+        elif provider == "ollama":
+            base_url, endpoint, extract_models, start_hint = LOCAL_PROVIDER_CONFIG[provider]
+            try:
+                async with httpx.AsyncClient(timeout=3.0) as client:
+                    response = await client.get(f"{base_url}{endpoint}")
+
+                latency_ms = (time.perf_counter() - start_time) * 1000
+                models = extract_models(response.json())
+
+                if not models:
+                    return ProviderHealthStatus(
+                        status="down",
+                        available_models=[],
+                        latency_ms=latency_ms
+                    )
+
+                # Check if all expected models are present
+                expected_models = AVAILABLE_MODELS.get("ollama", [])
+                missing_models = [m for m in expected_models if m not in models]
+
+                if missing_models:
+                    # Partial status - some models missing
+                    return ProviderHealthStatus(
+                        status="partial",
+                        available_models=models,
+                        latency_ms=latency_ms
+                    )
+                else:
+                    return ProviderHealthStatus(
+                        status="up",
+                        available_models=models,
+                        latency_ms=latency_ms
+                    )
+
+            except httpx.ConnectError:
+                return ProviderHealthStatus(
+                    status="down",
+                    available_models=[],
+                    error=f"{provider} service not running. Start with: {start_hint}"
+                )
+            except httpx.TimeoutException:
+                return ProviderHealthStatus(
+                    status="down",
+                    available_models=[],
+                    error=f"{provider} service timeout. Check if service is running"
+                )
+            except Exception as e:
+                return ProviderHealthStatus(
+                    status="down",
+                    available_models=[],
+                    error=f"Error checking {provider}: {str(e)}"
+                )
+
+        # LM Studio: Service running check + model list
+        elif provider == "lmstudio":
+            base_url, endpoint, extract_models, start_hint = LOCAL_PROVIDER_CONFIG[provider]
+            try:
+                async with httpx.AsyncClient(timeout=3.0) as client:
+                    response = await client.get(f"{base_url}{endpoint}")
+
+                latency_ms = (time.perf_counter() - start_time) * 1000
+                models = extract_models(response.json())
+
+                if not models:
+                    return ProviderHealthStatus(
+                        status="down",
+                        available_models=[],
+                        latency_ms=latency_ms
+                    )
+
+                return ProviderHealthStatus(
+                    status="up",
+                    available_models=models,
+                    latency_ms=latency_ms
+                )
+
+            except httpx.ConnectError:
+                return ProviderHealthStatus(
+                    status="down",
+                    available_models=[],
+                    error=f"{provider} service not running. Start with: {start_hint}"
+                )
+            except httpx.TimeoutException:
+                return ProviderHealthStatus(
+                    status="down",
+                    available_models=[],
+                    error=f"{provider} service timeout. Check if service is running"
+                )
+            except Exception as e:
+                return ProviderHealthStatus(
+                    status="down",
+                    available_models=[],
+                    error=f"Error checking {provider}: {str(e)}"
+                )
+
+        else:
+            return ProviderHealthStatus(
+                status="down",
+                available_models=[],
+                error=f"Unknown provider: {provider}"
+            )
+
+    except Exception as e:
+        logger.error(f"Unexpected error checking {provider}: {str(e)}")
+        return ProviderHealthStatus(
+            status="down",
+            available_models=[],
+            error=f"Error checking {provider}: {str(e)}"
+        )
+
+
+async def check_all_providers_async() -> CheckProvidersResponse:
+    """Check health of all 5 providers concurrently.
+
+    Returns:
+        CheckProvidersResponse with status for all providers
+    """
+    start_time = time.perf_counter()
+
+    providers = ["openai", "anthropic", "ollama", "lmstudio", "zai"]
+    tasks = [_check_provider_health(p) for p in providers]
+
+    # Execute all checks concurrently
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Process results
+    providers_dict = {}
+    up = down = partial = 0
+
+    for provider, result in zip(providers, results):
+        if isinstance(result, Exception):
+            # Handle exception case
+            providers_dict[provider] = ProviderHealthStatus(
+                status="down",
+                available_models=[],
+                error=str(result)
+            )
+            down += 1
+        else:
+            # Result is ProviderHealthStatus
+            providers_dict[provider] = result
+            if result.status == "up":
+                up += 1
+            elif result.status == "down":
+                down += 1
+            elif result.status == "partial":
+                partial += 1
+
+    total_check_time_ms = (time.perf_counter() - start_time) * 1000
+
+    logger.info(
+        f"Health check completed: {up} up, {down} down, {partial} partial "
+        f"in {total_check_time_ms:.1f}ms"
+    )
+
+    return CheckProvidersResponse(
+        success=True,
+        providers=providers_dict,
+        total_check_time_ms=total_check_time_ms,
+        providers_up=up,
+        providers_down=down,
+        providers_partial=partial
+    )

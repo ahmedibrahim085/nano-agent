@@ -32,7 +32,7 @@ from .data_types import (
     PromptNanoAgentResponse,
     LaunchAgentRequest,
     AgentConfig,
-    AgentExecution
+    AgentExecution,
 )
 
 from .constants import (
@@ -58,7 +58,7 @@ from .nano_agent_tools import get_nano_agent_tools, set_workspace
 from .agent_identity import read_agent_instructions, build_layered_prompt
 
 # Import provider configuration
-from .provider_config import ProviderConfig
+from .provider_config import ProviderConfig, check_all_providers_async
 
 # Initialize logger and rich console
 logger = logging.getLogger(__name__)
@@ -804,6 +804,85 @@ async def launch_agent(
             metadata={"error_type": type(e).__name__}
         )
         return error_response.model_dump()
+
+
+async def check_providers(
+    ctx: Any = None
+) -> Dict[str, Any]:
+    """
+    Check the health and availability of all configured LLM providers.
+
+    This tool performs concurrent health checks across OpenAI, Anthropic,
+    Ollama, LM Studio, and Z.ai providers. For each provider, it reports:
+    - Status: "up", "down", or "partial" (partial only for local providers)
+    - Available models: List of model names
+    - Latency: Response time in milliseconds
+    - Error: Error message if status is "down"
+
+    Cloud providers (OpenAI, Anthropic, Z.ai) check API keys and endpoint
+    reachability. Local providers (Ollama, LM Studio) check if the service
+    is running and list loaded models.
+
+    Args:
+        ctx: MCP context (automatically injected)
+
+    Returns:
+        Dictionary containing:
+        - success: Whether health checks completed successfully
+        - providers: Dict with per-provider health status
+        - total_check_time_ms: Total time for all checks
+        - providers_up: Count of providers with status='up'
+        - providers_down: Count of providers with status='down'
+        - providers_partial: Count of providers with status='partial'
+
+    Examples:
+        >>> await check_providers()
+        {
+            "success": True,
+            "providers": {
+                "openai": {"status": "up", "available_models": [...], "latency_ms": 245.3, "error": None},
+                "anthropic": {"status": "up", "available_models": [...], "latency_ms": 0.5, "error": None},
+                "ollama": {"status": "partial", "available_models": [...], "latency_ms": 45.2, "error": None},
+                "lmstudio": {"status": "down", "available_models": [], "latency_ms": None, "error": "..."},
+                "zai": {"status": "up", "available_models": [...], "latency_ms": 0.5, "error": None}
+            },
+            "total_check_time_ms": 245.3,
+            "providers_up": 3,
+            "providers_down": 1,
+            "providers_partial": 1
+        }
+    """
+    try:
+        # Report progress if context is available
+        if ctx:
+            await ctx.report_progress(0, 1, "Checking provider health...")
+
+        # Execute health checks
+        response = await check_all_providers_async()
+
+        # Report progress completion
+        if ctx:
+            await ctx.report_progress(1, 1, "Health check complete")
+
+        # Convert response to dictionary for MCP protocol
+        return response.model_dump()
+
+    except Exception as e:
+        logger.error(f"Error in check_providers: {str(e)}", exc_info=True)
+
+        if ctx:
+            await ctx.error(f"Health check failed: {str(e)}")
+
+        # Return error response as dict
+        return {
+            "success": False,
+            "providers": {},
+            "total_check_time_ms": 0,
+            "providers_up": 0,
+            "providers_down": 0,
+            "providers_partial": 0,
+            "error": str(e)
+        }
 
 
 # Additional utility functions

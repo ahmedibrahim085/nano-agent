@@ -79,6 +79,52 @@ class PromptNanoAgentResponse(BaseModel):
     )
 
 
+class ProviderHealthStatus(BaseModel):
+    """Health status for a single provider."""
+    status: Literal["up", "down", "partial"] = Field(
+        description="Provider health status"
+    )
+    available_models: List[str] = Field(
+        default_factory=list,
+        description="List of available model names"
+    )
+    latency_ms: Optional[float] = Field(
+        default=None,
+        description="Response latency in milliseconds"
+    )
+    error: Optional[str] = Field(
+        default=None,
+        description="Error message if status is 'down'"
+    )
+
+
+class CheckProvidersResponse(BaseModel):
+    """Response model for check_providers MCP tool."""
+    success: bool = Field(description="Whether health checks completed successfully")
+    providers: Dict[str, ProviderHealthStatus] = Field(
+        description="Health status per provider"
+    )
+    total_check_time_ms: float = Field(
+        description="Total time for all checks in milliseconds"
+    )
+    providers_up: int = Field(
+        default=0,
+        description="Count of providers with status='up'"
+    )
+    providers_down: int = Field(
+        default=0,
+        description="Count of providers with status='down'"
+    )
+    providers_partial: int = Field(
+        default=0,
+        description="Count of providers with status='partial'"
+    )
+    error: Optional[str] = Field(
+        default=None,
+        description="Error message if health check itself failed"
+    )
+
+
 # Internal Agent Tool Models
 
 class ReadFileRequest(BaseModel):

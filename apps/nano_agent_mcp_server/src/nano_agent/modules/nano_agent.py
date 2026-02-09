@@ -30,6 +30,7 @@ from .token_tracking import TokenTracker, format_token_count, format_cost
 from .data_types import (
     PromptNanoAgentRequest,
     PromptNanoAgentResponse,
+    LaunchAgentRequest,
     AgentConfig,
     AgentExecution
 )
@@ -52,6 +53,9 @@ from .constants import (
 
 # Import tools from nano_agent_tools
 from .nano_agent_tools import get_nano_agent_tools, set_workspace
+
+# Import agent identity utilities
+from .agent_identity import read_agent_instructions, build_layered_prompt
 
 # Import provider configuration
 from .provider_config import ProviderConfig
@@ -288,7 +292,7 @@ class RichLoggingHooks(RunHooksBase):
             ))
 
 
-async def _execute_nano_agent_async(request: PromptNanoAgentRequest, enable_rich_logging: bool = True) -> PromptNanoAgentResponse:
+async def _execute_nano_agent_async(request: PromptNanoAgentRequest, enable_rich_logging: bool = True, instructions_override: str | None = None) -> PromptNanoAgentResponse:
     """
     Execute the nano agent using OpenAI Agent SDK (async version).
 
@@ -298,6 +302,9 @@ async def _execute_nano_agent_async(request: PromptNanoAgentRequest, enable_rich
     Args:
         request: The validated request containing prompt and configuration
         enable_rich_logging: Whether to enable rich console logging for tool calls
+        instructions_override: Optional custom instructions to use instead of the default
+            NANO_AGENT_SYSTEM_PROMPT. When set, this string replaces the base prompt.
+            Used by launch_agent() to inject layered agent identity instructions.
 
     Returns:
         Response with execution results or error information
@@ -346,7 +353,10 @@ async def _execute_nano_agent_async(request: PromptNanoAgentRequest, enable_rich
         )
 
         # Build instructions with workspace context
-        instructions = NANO_AGENT_SYSTEM_PROMPT + f"\n\nWorkspace directory: {workspace_path}\n"
+        if instructions_override:
+            instructions = instructions_override + f"\n\nWorkspace directory: {workspace_path}\n"
+        else:
+            instructions = NANO_AGENT_SYSTEM_PROMPT + f"\n\nWorkspace directory: {workspace_path}\n"
 
         # Create agent using the provider configuration
         agent = ProviderConfig.create_agent(
@@ -428,7 +438,7 @@ async def _execute_nano_agent_async(request: PromptNanoAgentRequest, enable_rich
         )
 
 
-def _execute_nano_agent(request: PromptNanoAgentRequest, enable_rich_logging: bool = True) -> PromptNanoAgentResponse:
+def _execute_nano_agent(request: PromptNanoAgentRequest, enable_rich_logging: bool = True, instructions_override: str | None = None) -> PromptNanoAgentResponse:
     """
     Execute the nano agent using OpenAI Agent SDK.
     
@@ -438,6 +448,9 @@ def _execute_nano_agent(request: PromptNanoAgentRequest, enable_rich_logging: bo
     Args:
         request: The validated request containing prompt and configuration
         enable_rich_logging: Whether to enable rich console logging for tool calls
+        instructions_override: Optional custom instructions to use instead of the default
+            NANO_AGENT_SYSTEM_PROMPT. When set, this string replaces the base prompt.
+            Used by launch_agent() to inject layered agent identity instructions.
         
     Returns:
         Response with execution results or error information
@@ -483,7 +496,10 @@ def _execute_nano_agent(request: PromptNanoAgentRequest, enable_rich_logging: bo
         )
 
         # Build instructions with workspace context
-        instructions = NANO_AGENT_SYSTEM_PROMPT + f"\n\nWorkspace directory: {workspace_path}\n"
+        if instructions_override:
+            instructions = instructions_override + f"\n\nWorkspace directory: {workspace_path}\n"
+        else:
+            instructions = NANO_AGENT_SYSTEM_PROMPT + f"\n\nWorkspace directory: {workspace_path}\n"
 
         # Create agent with provider-specific configuration
         agent = ProviderConfig.create_agent(
@@ -668,6 +684,120 @@ async def prompt_nano_agent(
             await ctx.error(f"Execution failed: {str(e)}")
         
         # Return error response
+        error_response = PromptNanoAgentResponse(
+            success=False,
+            error=str(e),
+            metadata={"error_type": type(e).__name__}
+        )
+        return error_response.model_dump()
+
+
+async def launch_agent(
+    agentic_prompt: str,
+    agent_path: str,
+    workspace: str = "",
+    model: str = DEFAULT_MODEL,
+    provider: str = DEFAULT_PROVIDER,
+    ctx: Any = None
+) -> Dict[str, Any]:
+    """
+    Launch an agent with a specific identity to work on a project.
+
+    Reads the agent's identity from agent_path/AGENT.md and optionally loads
+    project-specific rules from workspace/AGENT.md. The agent executes with
+    a layered system prompt: Base Instructions + Agent Instructions + Project Instructions.
+
+    Args:
+        agentic_prompt: Natural language description of the work to be done.
+
+        agent_path: Path to directory containing the agent's AGENT.md identity file.
+                   This file defines WHO the agent is (role, expertise, behavior).
+                   Example: "/Users/me/Ai_Teams/backend-expert"
+
+        workspace: Working directory for the agent. Shell commands execute here
+                  and relative file paths resolve from here. Defaults to cwd.
+                  If workspace/AGENT.md exists, it's loaded as Project Instructions.
+
+        model: The LLM model to use for the agent.
+
+        provider: The LLM provider.
+
+        ctx: MCP context (automatically injected)
+
+    Returns:
+        Dictionary containing success, result, error, metadata, execution_time_seconds
+
+    Examples:
+        >>> await launch_agent(
+        ...     "Build the REST API",
+        ...     agent_path="/teams/backend-expert",
+        ...     workspace="/projects/my-api",
+        ...     model="glm-4.7",
+        ...     provider="zai"
+        ... )
+        {"success": True, "result": "Built FastAPI application..."}
+    """
+    try:
+        # Report progress if context is available
+        if ctx:
+            await ctx.report_progress(0.1, 1.0, "Loading agent identity...")
+
+        # Validate request
+        request = LaunchAgentRequest(
+            agentic_prompt=agentic_prompt,
+            agent_path=agent_path,
+            model=model,
+            provider=provider,
+            workspace=workspace or None,
+        )
+
+        # Read agent identity from AGENT.md
+        agent_instructions = read_agent_instructions(request.agent_path)
+
+        if ctx:
+            await ctx.report_progress(0.2, 1.0, "Building agent instructions...")
+
+        # Build layered system prompt
+        layered_prompt = build_layered_prompt(
+            agent_instructions=agent_instructions,
+            agent_path=request.agent_path,
+            workspace=request.workspace,
+        )
+
+        if ctx:
+            await ctx.report_progress(0.3, 1.0, "Executing agent task...")
+
+        # Create internal request for execution (reuse PromptNanoAgentRequest)
+        internal_request = PromptNanoAgentRequest(
+            agentic_prompt=request.agentic_prompt,
+            model=request.model,
+            provider=request.provider,
+            workspace=request.workspace,
+        )
+
+        # Execute agent with custom instructions
+        response = await _execute_nano_agent_async(
+            internal_request,
+            enable_rich_logging=(ctx is None),
+            instructions_override=layered_prompt,
+        )
+
+        if ctx:
+            await ctx.report_progress(1.0, 1.0, "Task completed")
+            if response.success:
+                await ctx.info(SUCCESS_AGENT_COMPLETE.format(response.execution_time_seconds))
+            else:
+                await ctx.error(f"Agent failed: {response.error}")
+
+        # Convert response to dictionary for MCP protocol
+        return response.model_dump()
+
+    except Exception as e:
+        logger.error(f"Error in launch_agent: {str(e)}", exc_info=True)
+
+        if ctx:
+            await ctx.error(f"Execution failed: {str(e)}")
+
         error_response = PromptNanoAgentResponse(
             success=False,
             error=str(e),

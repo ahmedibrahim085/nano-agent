@@ -33,6 +33,37 @@ class PromptNanoAgentRequest(BaseModel):
     )
 
 
+class LaunchAgentRequest(BaseModel):
+    """Request model for launch_agent MCP tool.
+
+    Deploys an agent with a specific identity (from agent_path/AGENT.md)
+    to work on a project (in workspace directory).
+    """
+    agentic_prompt: str = Field(
+        ...,
+        description="Natural language description of the work to be done",
+        min_length=1,
+        max_length=10000
+    )
+    agent_path: str = Field(
+        ...,
+        description="Path to directory containing the agent's AGENT.md identity file",
+        min_length=1
+    )
+    model: str = Field(
+        default="gpt-5-mini",
+        description="LLM model to use for the agent"
+    )
+    provider: Literal["openai", "anthropic", "ollama", "lmstudio", "zai"] = Field(
+        default="openai",
+        description="LLM provider for the agent"
+    )
+    workspace: Optional[str] = Field(
+        default=None,
+        description="Working directory for the agent. Shell commands run here. Defaults to cwd."
+    )
+
+
 class PromptNanoAgentResponse(BaseModel):
     """Response model for prompt_nano_agent MCP tool."""
     success: bool = Field(description="Whether the agent completed successfully")

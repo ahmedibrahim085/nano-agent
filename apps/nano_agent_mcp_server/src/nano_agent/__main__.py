@@ -12,7 +12,7 @@ from mcp.server.fastmcp import FastMCP
 load_dotenv()
 
 # Import our nano agent tool
-from .modules.nano_agent import prompt_nano_agent
+from .modules.nano_agent import prompt_nano_agent, launch_agent
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -32,13 +32,15 @@ mcp = FastMCP(
     autonomously, making it ideal for code generation, data processing, and
     automation workflows.
     
-    Main tool:
+    Main tools:
     - prompt_nano_agent: Execute an autonomous agent with a natural language task description
+    - launch_agent: Deploy an agent with a specific identity (AGENT.md) to work on a project
     """
 )
 
 # Register the nano agent tool
 mcp.tool()(prompt_nano_agent)
+mcp.tool()(launch_agent)
 
 
 def run():

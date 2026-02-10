@@ -13,7 +13,7 @@ MCP server that delegates tasks from Claude Code to subagents on 5 LLM providers
 - All agent tools MUST use `@function_tool` (not `ShellTool`/`ApplyPatchTool`) for cross-provider compatibility
 - Z.ai uses `LitellmModel` bridge — do not attempt native Anthropic SDK integration
 - Ollama: always use `127.0.0.1` not `localhost` (IPv4/IPv6 dual-instance bug)
-- Workspace isolation: `run_command` uses `cwd=workspace_dir`, set via `set_workspace()`
+- Workspace isolation: `bash` uses `cwd=workspace_dir` (persistent across calls), set via `set_workspace()`
 
 ## File Layout
 ```

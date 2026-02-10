@@ -48,7 +48,7 @@ All tools use `@function_tool` decorator (universal compatibility across all pro
 | `edit_file` | Surgical text replacement | Requires exact `old_str` match |
 | `list_directory` | List directory contents | Returns formatted listing |
 | `get_file_info` | File metadata | Size, modified date, permissions |
-| `run_command` | Execute shell commands | `asyncio.create_subprocess_shell`, 120s timeout, 8000-char output truncation |
+| `bash` | Execute shell commands/pipelines | `asyncio.create_subprocess_shell`, 120s timeout, 30K-char output cap, persistent CWD |
 
 ### Why `@function_tool` Over `ShellTool`?
 
@@ -224,10 +224,10 @@ cd apps/nano_agent_mcp_server && uv tool install -e . --force
 ## 12. What's Working (Verified)
 
 - [x] All 5 providers create agents correctly
-- [x] Z.ai GLM-4.7 can use tools (write_file, run_command verified)
+- [x] Z.ai GLM-4.7 can use tools (write_file, bash verified)
 - [x] Web dashboard all 6 features functional (E2E tested with screenshots)
-- [x] `run_command` with workspace isolation works
-- [x] Agent autonomously wrote hello.py and executed it via run_command
+- [x] `bash` with workspace isolation works (persistent CWD across calls)
+- [x] Agent autonomously wrote hello.py and executed it via bash
 - [x] Dynamic model discovery for Ollama/LM Studio
 - [x] Execution history tracking in dashboard
 

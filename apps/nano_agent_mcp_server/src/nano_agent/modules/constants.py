@@ -68,7 +68,7 @@ TOOL_LIST_DIRECTORY = "list_directory"
 TOOL_WRITE_FILE = "write_file"
 TOOL_GET_FILE_INFO = "get_file_info"
 TOOL_EDIT_FILE = "edit_file"
-TOOL_RUN_COMMAND = "run_command"
+TOOL_BASH = "bash"
 
 # Available Tools List
 AVAILABLE_TOOLS = [
@@ -77,7 +77,7 @@ AVAILABLE_TOOLS = [
     TOOL_WRITE_FILE,
     TOOL_GET_FILE_INFO,
     TOOL_EDIT_FILE,
-    TOOL_RUN_COMMAND,
+    TOOL_BASH,
 ]
 
 # Demo Configuration
@@ -99,7 +99,7 @@ NANO_AGENT_SYSTEM_PROMPT = """You are an autonomous coding agent that can read, 
 - edit_file(file_path, old_str, new_str) — Replace exact text in a file
 - list_directory(directory_path) — List directory contents
 - get_file_info(file_path) — Get file metadata
-- run_command(command) — Execute a shell command in the workspace
+- bash(command) — Execute shell commands, scripts, and multi-command pipelines in the workspace
 
 ## Workflow
 1. PLAN: Break the task into concrete steps
@@ -109,7 +109,7 @@ NANO_AGENT_SYSTEM_PROMPT = """You are an autonomous coding agent that can read, 
 
 ## Rules
 - Always read a file before editing it (to get exact text for old_str)
-- Use run_command for: installing dependencies, running tests, building projects, git operations
+- Use bash for: installing dependencies, running tests, building projects, git operations, chained commands (&&, ;, |)
 - Use edit_file for surgical changes to existing files (preferred over rewriting entire files)
 - Use write_file for creating new files or when the entire content changes
 - When a task involves multiple files, handle them one at a time

@@ -507,6 +507,19 @@ _pending_tool_args_var: contextvars.ContextVar[Optional[dict]] = contextvars.Con
 
 COMMAND_TIMEOUT_SECONDS = 120
 
+# Bash tool output limits (matches Claude Code's Bash tool)
+BASH_OUTPUT_MAX_CHARS = 30000
+BASH_OUTPUT_HEAD_RATIO = 0.6   # Keep 60% from start
+BASH_OUTPUT_TAIL_RATIO = 0.35  # Keep 35% from end
+
+# CWD tracking marker — unique enough to avoid collisions with user output
+_CWD_MARKER = "__NANO_CWD_f7e2a1__"
+
+# Persistent CWD for bash tool (per-task via ContextVar)
+_bash_cwd_var: contextvars.ContextVar[Optional[Path]] = contextvars.ContextVar(
+    '_bash_cwd', default=None
+)
+
 
 def set_workspace(workspace: Optional[str] = None) -> Path:
     """Set the workspace directory for agent tools.
@@ -523,6 +536,7 @@ def set_workspace(workspace: Optional[str] = None) -> Path:
         ws = Path.cwd()
     ws.mkdir(parents=True, exist_ok=True)
     _workspace_dir_var.set(ws)
+    _bash_cwd_var.set(None)  # Reset CWD tracking for new session
     return ws
 
 
@@ -532,6 +546,25 @@ def get_workspace() -> Path:
     if ws is None:
         return Path.cwd()
     return ws
+
+
+def get_bash_cwd() -> Path:
+    """Get CWD for bash tool — persists across calls within a session."""
+    cwd = _bash_cwd_var.get()
+    return cwd if cwd is not None else get_workspace()
+
+
+def _parse_cwd_from_output(stdout: str) -> tuple[str, Optional[Path]]:
+    """Extract CWD from marker in stdout. Returns (clean_output, new_cwd)."""
+    marker_idx = stdout.rfind(_CWD_MARKER)  # LAST occurrence
+    if marker_idx == -1:
+        return stdout, None
+    clean_output = stdout[:marker_idx].rstrip()
+    after_marker = stdout[marker_idx + len(_CWD_MARKER):].strip()
+    cwd_line = after_marker.split('\n')[0].strip()
+    if cwd_line and Path(cwd_line).is_absolute():
+        return clean_output, Path(cwd_line)
+    return clean_output, None
 
 
 def capture_args(tool_name: str, **kwargs):
@@ -617,27 +650,35 @@ def edit_file(file_path: str, old_str: str, new_str: str) -> str:
 
 
 @function_tool
-async def run_command(command: str) -> str:
-    """Execute a shell command in the workspace directory and return its output.
+async def bash(command: str) -> str:
+    """Execute shell commands, scripts, and multi-command pipelines in the workspace.
 
-    Use this for: installing dependencies, running tests, building projects,
-    git operations, or any task that requires shell access.
+    Supports chained commands (&&, ;, |), scripts, and persistent CWD across calls.
+    If you run 'cd /some/dir', subsequent bash calls will start in that directory.
 
     Args:
-        command: The shell command to execute (e.g. "npm install", "python -m pytest")
+        command: Shell command(s) to execute (e.g. "npm install && npm test",
+                 "cd src && python -m pytest", "grep -r TODO . | wc -l")
 
     Returns:
         Combined stdout/stderr and exit code, or an error message on failure/timeout.
     """
-    capture_args("run_command", command=command)
-    cwd = get_workspace()
+    capture_args("bash", command=command)
+    cwd = get_bash_cwd()
 
     if not cwd.exists():
         return f"Error: Workspace directory does not exist: {cwd}"
 
+    # Wrap command to capture CWD after execution (for persistent CWD tracking)
+    wrapped = (
+        f'{command}; __nano_exit=$?; '
+        f'echo "{_CWD_MARKER}"; pwd; '
+        f'exit $__nano_exit'
+    )
+
     try:
         proc = await asyncio.create_subprocess_shell(
-            command,
+            wrapped,
             cwd=str(cwd),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -654,20 +695,27 @@ async def run_command(command: str) -> str:
             await proc.communicate()
             return f"Error: Command timed out after {COMMAND_TIMEOUT_SECONDS}s: {command}"
 
-        stdout = stdout_bytes.decode("utf-8", errors="ignore")
+        stdout_raw = stdout_bytes.decode("utf-8", errors="ignore")
         stderr = stderr_bytes.decode("utf-8", errors="ignore")
 
+        # Parse CWD from stdout and strip the marker
+        stdout_clean, new_cwd = _parse_cwd_from_output(stdout_raw)
+        if new_cwd is not None:
+            _bash_cwd_var.set(new_cwd)
+
         parts = []
-        if stdout.strip():
-            parts.append(stdout.strip())
+        if stdout_clean.strip():
+            parts.append(stdout_clean.strip())
         if stderr.strip():
             parts.append(f"stderr:\n{stderr.strip()}")
         parts.append(f"[exit_code: {proc.returncode}]")
 
         result = "\n".join(parts)
         # Truncate very long output to stay within token budget
-        if len(result) > 8000:
-            result = result[:4000] + "\n...(truncated)...\n" + result[-2000:]
+        if len(result) > BASH_OUTPUT_MAX_CHARS:
+            head = int(BASH_OUTPUT_MAX_CHARS * BASH_OUTPUT_HEAD_RATIO)
+            tail = int(BASH_OUTPUT_MAX_CHARS * BASH_OUTPUT_TAIL_RATIO)
+            result = result[:head] + "\n...(truncated)...\n" + result[-tail:]
         return result
 
     except Exception as e:
@@ -688,5 +736,5 @@ def get_nano_agent_tools():
         list_directory,
         get_file_info,
         edit_file,
-        run_command,
+        bash,
     ]

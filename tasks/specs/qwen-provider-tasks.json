@@ -1,0 +1,249 @@
+{
+  "feature": "qwen-cloud-provider",
+  "branch": "feat/qwen-provider",
+  "safety_tags": ["pre-qwen-provider", "pre-review-qwen-provider"],
+  "base_commit": "025be60",
+  "tasks": [
+    {
+      "id": "T0",
+      "phase": 0,
+      "name": "Safety tag + feature branch",
+      "executor": "claude-code",
+      "status": "done",
+      "commit": null,
+      "evidence": {
+        "tag": "pre-qwen-provider",
+        "branch": "feat/qwen-provider"
+      }
+    },
+    {
+      "id": "T1-zai",
+      "phase": 1,
+      "name": "Create qwen_auth.py + test_qwen_auth.py",
+      "executor": "zai/glm-4.7",
+      "status": "done",
+      "commit": "ba29738",
+      "files": [
+        "modules/qwen_auth.py",
+        "tests/test_qwen_auth.py"
+      ],
+      "evidence": {
+        "lines": {"qwen_auth.py": 188, "test_qwen_auth.py": 264},
+        "tests_collected": 20,
+        "tests_passing": 20,
+        "functions": ["read_qwen_credentials", "is_token_expired", "refresh_token", "save_credentials", "get_valid_token"],
+        "constants": ["QWEN_CREDS_PATH", "QWEN_REFRESH_URL", "QWEN_CLIENT_ID", "EXPIRY_BUFFER_MS"]
+      }
+    },
+    {
+      "id": "T2",
+      "phase": 2,
+      "name": "Register Qwen in constants, data_types, model_capabilities",
+      "executor": "claude-code",
+      "status": "done",
+      "commit": "1277df3",
+      "files": [
+        "modules/constants.py",
+        "modules/data_types.py",
+        "tests/test_model_capabilities.py"
+      ],
+      "evidence": {
+        "literal_types_updated": 3,
+        "literal_locations": ["data_types.py:26", "data_types.py:57", "data_types.py:212"],
+        "constants_added": ["QWEN_BASE_URL", "QWEN_AVAILABLE_MODELS"],
+        "registrations": {
+          "MODEL_INFO": "constants.py:51 — coder-model",
+          "PROVIDER_REQUIREMENTS": "constants.py:61 — qwen: None",
+          "MODEL_CAPABILITIES": "constants.py:138 — coder-model (temp=0.7, max_tokens=65536, top_p=0.8)"
+        },
+        "new_qwen_tests": 7,
+        "total_model_cap_tests": 47,
+        "pre_existing_bug_fixed": "ERROR_PROVIDER_NOT_SUPPORTED now lists all 6 providers"
+      }
+    },
+    {
+      "id": "T3a-zai",
+      "phase": 3,
+      "name": "Create test_qwen_provider.py",
+      "executor": "zai/glm-4.7",
+      "status": "done",
+      "commit": "247a3b1",
+      "depends_on": ["T1-zai", "T2"],
+      "files": [
+        "tests/test_qwen_provider.py"
+      ],
+      "evidence": {
+        "tests_collected": 11,
+        "tests_passing": 11,
+        "lines": 205,
+        "test_classes": ["TestCreateAgentQwen(3)", "TestValidateSetupQwen(3)", "TestValidateSetupAsyncQwen(3)", "TestHealthCheckQwen(2)"]
+      }
+    },
+    {
+      "id": "T3b",
+      "phase": 3,
+      "name": "Wire Qwen into create_agent + validate",
+      "executor": "claude-code",
+      "status": "done",
+      "commit": "247a3b1",
+      "depends_on": ["T1-zai", "T2"],
+      "files": [
+        "modules/provider_config.py"
+      ],
+      "evidence": {
+        "dispatch_branches_added": 5,
+        "branches": {
+          "create_agent": "provider_config.py:185 — AsyncOpenAI + OpenAIChatCompletionsModel (Ollama pattern)",
+          "validate_provider_setup": "provider_config.py:245 — model list + QWEN_CREDS_PATH.exists()",
+          "validate_provider_setup_async": "provider_config.py:305 — same as sync",
+          "health_check": "provider_config.py:462 — creds file check + static model list (Z.ai pattern)",
+          "providers_list": "provider_config.py:598 — added 'qwen' to list"
+        },
+        "docstring_fixes": ["create_agent line 93: added 'qwen' to provider list"]
+      }
+    },
+    {
+      "id": "T4",
+      "phase": 4,
+      "name": "Health check + provider count 5→6",
+      "executor": "claude-code",
+      "status": "done",
+      "commit": "a7618cf",
+      "depends_on": ["T3b"],
+      "files": [
+        "modules/provider_config.py",
+        "tests/test_provider_health.py"
+      ],
+      "evidence": {
+        "provider_health_tests_total": 28,
+        "assertion_updates": 11,
+        "assertions_changed": [
+          "test_check_all_providers_async_concurrent: len 5→6, assert 'qwen' in providers",
+          "test_check_all_providers_async_counters: added qwen case, sum 5→6",
+          "test_check_all_providers_async_total_time: added 'qwen':1 to latencies",
+          "test_check_all_providers_async_one_exception: providers_up 4→5",
+          "test_check_all_providers_async_all_down: providers_down 5→6",
+          "test_check_providers_mcp_tool: added qwen entry, providers_up 5→6, len 5→6"
+        ]
+      }
+    },
+    {
+      "id": "T5",
+      "phase": 5,
+      "name": "Dashboard alignment (server.py + index.html)",
+      "executor": "claude-code",
+      "status": "done",
+      "commit": "b6ada68",
+      "depends_on": ["T2"],
+      "files": [
+        "web/server.py",
+        "web/static/index.html"
+      ],
+      "evidence": {
+        "server_changes": {
+          "imports": "QWEN_BASE_URL, QWEN_AVAILABLE_MODELS, QWEN_CREDS_PATH",
+          "get_providers": "server.py:168-178 — inline creds file check (after CC-3 fix)",
+          "get_models": "server.py:221-230 — QWEN_CREDS_PATH.exists() check"
+        },
+        "index_html_changes": {
+          "grid": "line 68: md:grid-cols-3 lg:grid-cols-6 (was md:grid-cols-5)",
+          "providerNames": "line 346: added 'qwen'",
+          "getProviderColor": "line 464: added 'qwen' → orange"
+        }
+      }
+    },
+    {
+      "id": "T6",
+      "phase": 6,
+      "name": "Docstrings + token pricing",
+      "executor": "claude-code",
+      "status": "done",
+      "commit": "ec7bccc",
+      "files": [
+        "modules/nano_agent.py",
+        "modules/token_tracking.py"
+      ],
+      "evidence": {
+        "prompt_nano_agent_docstring": "nano_agent.py:619 (Qwen: coder-model), :627 (qwen: Qwen Cloud models via OAuth)",
+        "launch_agent_docstring": "Not updated — uses generic model:/provider: without enumeration (by design, per plan Revision 2)",
+        "token_pricing": "token_tracking.py:141-148 — qwen/coder-model: $0.00 all fields (free tier)"
+      }
+    },
+    {
+      "id": "T7-review",
+      "phase": 7,
+      "name": "Implementation review — fix bugs found by Z.ai agents",
+      "executor": "claude-code + 2x zai/glm-4.7 reviewers",
+      "status": "done",
+      "commit": "cf3c542",
+      "files": [
+        "web/server.py",
+        "cli.py",
+        "modules/provider_config.py"
+      ],
+      "evidence": {
+        "review_tag": "pre-review-qwen-provider",
+        "findings_total": 17,
+        "bugs_fixed": 3,
+        "design_tradeoffs": 4,
+        "false_positives": 4,
+        "bugs": {
+          "CC-3": "Dashboard _check_cloud_provider('qwen', None) always returned 'online'. Fixed: inline QWEN_CREDS_PATH.exists() check in server.py:168-178",
+          "CI-8": "CLI check_api_key() silently skipped Qwen (PROVIDER_REQUIREMENTS['qwen'] is None). Fixed: added Qwen-specific branch in cli.py:40-45",
+          "DOC-1": "_check_provider_health() docstring listed 5 providers. Fixed: added ', qwen' at provider_config.py:348"
+        }
+      }
+    }
+  ],
+  "registration_points_verified": {
+    "data_types.py:PromptNanoAgentRequest.provider": "line 26 ✅",
+    "data_types.py:LaunchAgentRequest.provider": "line 57 ✅",
+    "data_types.py:AgentConfig.provider": "line 212 ✅",
+    "constants.py:QWEN_AVAILABLE_MODELS": "line 70 ✅",
+    "constants.py:PROVIDER_REQUIREMENTS": "line 61 ✅",
+    "constants.py:MODEL_CAPABILITIES": "line 138 ✅",
+    "constants.py:MODEL_INFO": "line 51 ✅",
+    "provider_config.py:create_agent()": "line 185 ✅",
+    "provider_config.py:validate_provider_setup()": "line 245 ✅",
+    "provider_config.py:validate_provider_setup_async()": "line 305 ✅",
+    "provider_config.py:_check_provider_health()": "line 462 ✅",
+    "provider_config.py:check_all_providers_async()": "line 598 ✅",
+    "web/server.py:get_providers()": "line 168 ✅",
+    "web/server.py:get_models()": "line 221 ✅",
+    "web/static/index.html:providerNames": "line 346 ✅",
+    "web/static/index.html:getProviderColor()": "line 464 ✅",
+    "nano_agent.py:prompt_nano_agent() docstring": "lines 619,627 ✅",
+    "token_tracking.py:MODEL_PRICING": "line 141 ✅",
+    "cli.py:check_api_key()": "line 40 ✅ (added during review)"
+  },
+  "files_verified_no_changes_needed": {
+    "nano_agent_tools.py": "Tools don't reference providers ✅",
+    "__main__.py": "MCP entry point, no provider logic ✅",
+    "agent_identity.py": "Prompt builder, no provider logic ✅",
+    "pyproject.toml": "No new dependencies (curl is system binary) ✅"
+  },
+  "plan_corrections": {
+    "cli.py": "Plan said 'Uses PROVIDER_REQUIREMENTS dict (auto-works)' — WRONG. check_api_key() silently skipped Qwen. Fixed during review."
+  },
+  "test_summary": {
+    "new_test_files": 2,
+    "new_tests": 38,
+    "assertion_updates": 11,
+    "total_qwen_tests_passing": 104,
+    "total_qwen_tests_failing": 0,
+    "pre_existing_failures": 3,
+    "pre_existing_failure_details": "test_multi_provider.py: localhost vs 127.0.0.1 (2), tracing behavior (1)"
+  },
+  "commits": [
+    {"sha": "ba29738", "message": "feat(qwen): add OAuth token management module with tests"},
+    {"sha": "1277df3", "message": "feat(qwen): register Qwen in constants, data types, and model capabilities"},
+    {"sha": "247a3b1", "message": "feat(qwen): wire Qwen into create_agent and validate_provider_setup"},
+    {"sha": "a7618cf", "message": "feat(qwen): add Qwen health check and update provider count to 6"},
+    {"sha": "b6ada68", "message": "feat(qwen): align dashboard with 6-provider architecture"},
+    {"sha": "ec7bccc", "message": "feat(qwen): update MCP tool docstrings and add token pricing"},
+    {"sha": "cf3c542", "message": "fix(qwen): dashboard provider status, CLI creds check, and docstring"}
+  ],
+  "total_files_changed": 13,
+  "total_lines_added": 866,
+  "total_lines_removed": 24
+}

@@ -98,6 +98,33 @@ class ProviderHealthStatus(BaseModel):
     )
 
 
+class ModelCapability(BaseModel):
+    """Per-model capability and settings configuration."""
+    temperature: float = Field(
+        default=0.2,
+        ge=0.0, le=2.0,
+        description="Default temperature for this model"
+    )
+    max_tokens: int = Field(
+        default=16000,
+        gt=0,
+        description="Maximum output tokens for this model"
+    )
+    supports_tools: bool = Field(
+        default=True,
+        description="Whether this model supports function/tool calling"
+    )
+    supports_temperature: bool = Field(
+        default=True,
+        description="Whether this model accepts temperature parameter"
+    )
+    top_p: Optional[float] = Field(
+        default=None,
+        ge=0.0, le=1.0,
+        description="Top-p sampling (None = use model default)"
+    )
+
+
 class CheckProvidersResponse(BaseModel):
     """Response model for check_providers MCP tool."""
     success: bool = Field(description="Whether health checks completed successfully")

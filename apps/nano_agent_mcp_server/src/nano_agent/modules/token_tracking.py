@@ -137,7 +137,15 @@ MODEL_PRICING: Dict[str, Dict[str, Dict[str, float]]] = {
             "reasoning_token_per_million_cost": 0.00,
             "compute_cost_per_hour": 1.00,  # Lower GPU requirements
         },
-    }
+    },
+    "qwen": {
+        "coder-model": {
+            "input_token_per_million_cost": 0.00,   # Free qwen-oauth tier
+            "output_token_per_million_cost": 0.00,
+            "cached_input_token_per_million_cost": 0.00,
+            "reasoning_token_per_million_cost": 0.00,
+        },
+    },
 }
 
 

@@ -165,11 +165,16 @@ async def get_providers():
         ZAI_AVAILABLE_MODELS,
         ZAI_BASE_URL,
     ))
-    providers.append(_check_cloud_provider(
-        "qwen", None,
-        QWEN_AVAILABLE_MODELS,
-        QWEN_BASE_URL,
-    ))
+    # Qwen Cloud: file-based OAuth, not env-var-based — check creds file directly
+    providers.append({
+        "name": "qwen",
+        "status": "online" if QWEN_CREDS_PATH.exists() else "no_api_key",
+        "latency_ms": None,
+        "model_count": len(QWEN_AVAILABLE_MODELS),
+        "models": QWEN_AVAILABLE_MODELS,
+        "base_url": QWEN_BASE_URL,
+        "type": "cloud",
+    })
 
     return {"providers": providers}
 

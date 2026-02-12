@@ -35,7 +35,16 @@ app = typer.Typer()
 console = Console()
 
 def check_api_key(provider: str = "openai"):
-    """Check if the required API key is set for the given provider."""
+    """Check if the required credentials are available for the given provider."""
+    # Qwen Cloud: file-based OAuth, not env var
+    if provider == "qwen":
+        from .modules.qwen_auth import QWEN_CREDS_PATH
+        if not QWEN_CREDS_PATH.exists():
+            console.print(f"[red]Error: Qwen OAuth credentials not found at {QWEN_CREDS_PATH}[/red]")
+            console.print("Please run 'qwen' CLI to authenticate first.")
+            sys.exit(1)
+        return
+
     required_key = PROVIDER_REQUIREMENTS.get(provider)
     if required_key and not os.getenv(required_key):
         console.print(f"[red]Error: {required_key} environment variable is not set[/red]")

@@ -344,7 +344,7 @@ async def _check_provider_health(provider: str) -> ProviderHealthStatus:
     """Check health of a single provider.
 
     Args:
-        provider: Provider name (openai, anthropic, ollama, lmstudio, zai)
+        provider: Provider name (openai, anthropic, ollama, lmstudio, zai, qwen)
 
     Returns:
         ProviderHealthStatus with status, models, latency, and error

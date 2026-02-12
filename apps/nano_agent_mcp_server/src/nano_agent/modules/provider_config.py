@@ -70,6 +70,14 @@ class ProviderConfig:
         settings["max_tokens"] = caps.max_tokens
         if caps.top_p is not None:
             settings["top_p"] = caps.top_p
+        if caps.parallel_tool_calls is not None:
+            settings["parallel_tool_calls"] = caps.parallel_tool_calls
+        if caps.frequency_penalty is not None:
+            settings["frequency_penalty"] = caps.frequency_penalty
+        if caps.presence_penalty is not None:
+            settings["presence_penalty"] = caps.presence_penalty
+        if caps.extra_body is not None:
+            settings["extra_body"] = caps.extra_body
 
         logger.debug(f"Model settings for {model} ({provider}): {settings}")
         return ModelSettings(**settings)

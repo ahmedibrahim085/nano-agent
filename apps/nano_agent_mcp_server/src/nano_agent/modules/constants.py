@@ -59,8 +59,76 @@ ZAI_AVAILABLE_MODELS = ["glm-4.7", "glm-4.5-air"]
 
 # Agent Configuration
 MAX_AGENT_TURNS = 20  # Maximum turns in agent loop
-DEFAULT_TEMPERATURE = 0.2  # Temperature for agent responses
-MAX_TOKENS = 16000  # Maximum tokens per response
+
+# Per-model capabilities registry
+from .data_types import ModelCapability
+
+# Fallback for unknown models
+DEFAULT_MODEL_CAPABILITY = ModelCapability()
+
+MODEL_CAPABILITIES: dict[str, ModelCapability] = {
+    # OpenAI
+    "gpt-5": ModelCapability(
+        temperature=1.0,       # GPT-5 doesn't support custom temperature
+        max_tokens=100000,
+        supports_temperature=False,
+    ),
+    "gpt-5-mini": ModelCapability(
+        max_tokens=32000,
+    ),
+    "gpt-5-nano": ModelCapability(
+        max_tokens=16000,
+    ),
+    "gpt-4o": ModelCapability(
+        max_tokens=16384,
+    ),
+    # Anthropic
+    "claude-opus-4-1-20250805": ModelCapability(
+        max_tokens=32000,
+    ),
+    "claude-opus-4-20250514": ModelCapability(
+        max_tokens=32000,
+    ),
+    "claude-sonnet-4-20250514": ModelCapability(
+        max_tokens=16000,
+    ),
+    "claude-3-haiku-20240307": ModelCapability(
+        max_tokens=4096,
+    ),
+    # Ollama (local)
+    "gpt-oss:20b": ModelCapability(
+        max_tokens=8192,
+    ),
+    "gpt-oss:120b": ModelCapability(
+        max_tokens=16000,
+    ),
+    "qwen3-coder:30b": ModelCapability(
+        max_tokens=16000,
+    ),
+    "gemma3:27b": ModelCapability(
+        max_tokens=8192,
+        supports_tools=False,
+    ),
+    "magistral:latest": ModelCapability(
+        max_tokens=16000,
+    ),
+    # Z.ai
+    "glm-4.7": ModelCapability(
+        temperature=1.0,
+        max_tokens=131072,
+        top_p=0.95,
+    ),
+    "glm-4.5-air": ModelCapability(
+        temperature=1.0,
+        max_tokens=16000,
+        top_p=0.95,
+    ),
+}
+
+
+def get_model_capabilities(model: str) -> ModelCapability:
+    """Look up capabilities for a model. Falls back to DEFAULT_MODEL_CAPABILITY for unknown models."""
+    return MODEL_CAPABILITIES.get(model, DEFAULT_MODEL_CAPABILITY)
 
 # Tool Names
 TOOL_READ_FILE = "read_file"

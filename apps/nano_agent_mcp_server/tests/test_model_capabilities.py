@@ -255,3 +255,119 @@ class TestGetModelSettings:
         assert "base_settings" not in params
         assert "model" in params
         assert "provider" in params
+
+
+# ── Phase 4: Review hardening — regression guards + integration + edge cases ──
+
+
+class TestRegressionGuards:
+    """Regression guards for known bugs that were fixed."""
+
+    def test_gpt5_uses_max_tokens_not_max_completion_tokens(self):
+        """Regression: GPT-5 must use max_tokens field, not max_completion_tokens.
+
+        The OpenAI raw API uses max_completion_tokens, but the Agent SDK's
+        ModelSettings uses max_tokens. Using the wrong field silently drops the value.
+        """
+        from nano_agent.modules.provider_config import ProviderConfig
+
+        ms = ProviderConfig.get_model_settings("gpt-5", "openai")
+        assert ms.max_tokens == 100000
+        assert getattr(ms, "max_completion_tokens", None) is None
+
+    def test_unknown_model_fallback_has_no_top_p(self):
+        """Unknown model fallback should not set top_p."""
+        from nano_agent.modules.provider_config import ProviderConfig
+
+        ms = ProviderConfig.get_model_settings("unknown-model", "openai")
+        assert ms.top_p is None
+
+    def test_model_name_lookup_is_case_sensitive(self):
+        """Lookup is case-sensitive: 'GPT-5' != 'gpt-5'."""
+        from nano_agent.modules.constants import get_model_capabilities, DEFAULT_MODEL_CAPABILITY
+
+        cap = get_model_capabilities("GPT-5")
+        assert cap is DEFAULT_MODEL_CAPABILITY
+
+
+class TestIntegrationPipeline:
+    """Integration tests: validate + settings compose correctly."""
+
+    def test_glm47_full_pipeline(self):
+        """GLM-4.7: passes validation, gets full-capacity ModelSettings."""
+        from nano_agent.modules.provider_config import ProviderConfig
+        from agents import ModelSettings
+
+        ok, err = ProviderConfig.validate_tool_support("glm-4.7")
+        assert ok is True
+
+        ms = ProviderConfig.get_model_settings("glm-4.7", "zai")
+        assert isinstance(ms, ModelSettings)
+        assert ms.temperature == 1.0
+        assert ms.max_tokens == 131072
+        assert ms.top_p == 0.95
+
+    def test_gpt5_full_pipeline(self):
+        """GPT-5: passes validation, temperature omitted, max_tokens correct."""
+        from nano_agent.modules.provider_config import ProviderConfig
+        from agents import ModelSettings
+
+        ok, err = ProviderConfig.validate_tool_support("gpt-5")
+        assert ok is True
+
+        ms = ProviderConfig.get_model_settings("gpt-5", "openai")
+        assert isinstance(ms, ModelSettings)
+        assert ms.temperature is None
+        assert ms.max_tokens == 100000
+        assert ms.top_p is None
+
+    def test_gemma3_rejected_before_settings(self):
+        """Gemma3: rejected at validation, never reaches settings."""
+        from nano_agent.modules.provider_config import ProviderConfig
+
+        ok, err = ProviderConfig.validate_tool_support("gemma3:27b")
+        assert ok is False
+        assert "does not support tool calling" in err
+
+    def test_models_without_top_p_have_none(self):
+        """Models without top_p in registry produce ModelSettings.top_p=None."""
+        from nano_agent.modules.provider_config import ProviderConfig
+
+        ms = ProviderConfig.get_model_settings("gpt-5-mini", "openai")
+        assert ms.top_p is None
+
+
+class TestBoundaryValues:
+    """Boundary value tests for Pydantic validators."""
+
+    def test_temperature_at_zero(self):
+        """temperature=0.0 is valid (ge=0.0 boundary)."""
+        from nano_agent.modules.data_types import ModelCapability
+
+        assert ModelCapability(temperature=0.0).temperature == 0.0
+
+    def test_temperature_at_max(self):
+        """temperature=2.0 is valid (le=2.0 boundary)."""
+        from nano_agent.modules.data_types import ModelCapability
+
+        assert ModelCapability(temperature=2.0).temperature == 2.0
+
+    def test_temperature_above_max_rejected(self):
+        """temperature=2.01 is rejected."""
+        from nano_agent.modules.data_types import ModelCapability
+
+        with pytest.raises(ValidationError):
+            ModelCapability(temperature=2.01)
+
+    def test_max_tokens_one_is_valid(self):
+        """max_tokens=1 is valid (gt=0 means minimum is 1)."""
+        from nano_agent.modules.data_types import ModelCapability
+
+        assert ModelCapability(max_tokens=1).max_tokens == 1
+
+    def test_negative_max_tokens_rejected(self):
+        """Negative max_tokens is rejected."""
+        from nano_agent.modules.data_types import ModelCapability
+
+        with pytest.raises(ValidationError):
+            ModelCapability(max_tokens=-1)

@@ -5,6 +5,8 @@ This module contains all shared constants, default values, and configuration
 used across the nano agent codebase.
 """
 
+from .data_types import ModelCapability
+
 # Default Model Configuration
 DEFAULT_MODEL = "gpt-5-mini"  # Efficient, fast, good for most tasks
 DEFAULT_PROVIDER = "openai"
@@ -61,7 +63,6 @@ ZAI_AVAILABLE_MODELS = ["glm-4.7", "glm-4.5-air"]
 MAX_AGENT_TURNS = 20  # Maximum turns in agent loop
 
 # Per-model capabilities registry
-from .data_types import ModelCapability
 
 # Fallback for unknown models
 DEFAULT_MODEL_CAPABILITY = ModelCapability()
@@ -128,7 +129,16 @@ MODEL_CAPABILITIES: dict[str, ModelCapability] = {
 
 def get_model_capabilities(model: str) -> ModelCapability:
     """Look up capabilities for a model. Falls back to DEFAULT_MODEL_CAPABILITY for unknown models."""
-    return MODEL_CAPABILITIES.get(model, DEFAULT_MODEL_CAPABILITY)
+    caps = MODEL_CAPABILITIES.get(model)
+    if caps is None:
+        import logging
+        logging.getLogger(__name__).warning(
+            f"No capability entry for model '{model}' — using defaults "
+            f"(max_tokens={DEFAULT_MODEL_CAPABILITY.max_tokens}, "
+            f"supports_tools={DEFAULT_MODEL_CAPABILITY.supports_tools})"
+        )
+        return DEFAULT_MODEL_CAPABILITY
+    return caps
 
 # Tool Names
 TOOL_READ_FILE = "read_file"

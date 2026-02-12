@@ -21,7 +21,7 @@ from . import typing_fix
 
 # Import data types for health check
 from .data_types import ProviderHealthStatus, CheckProvidersResponse
-from .constants import AVAILABLE_MODELS, ZAI_AVAILABLE_MODELS
+from .constants import AVAILABLE_MODELS, ZAI_AVAILABLE_MODELS, get_model_capabilities
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,6 @@ class ProviderConfig:
             (True, None) if model supports tools.
             (False, error_message) if model does NOT support tools.
         """
-        from .constants import get_model_capabilities
         caps = get_model_capabilities(model)
         if not caps.supports_tools:
             return False, (
@@ -63,7 +62,6 @@ class ProviderConfig:
         Returns:
             ModelSettings configured for the specific model
         """
-        from .constants import get_model_capabilities
         caps = get_model_capabilities(model)
 
         settings = {}

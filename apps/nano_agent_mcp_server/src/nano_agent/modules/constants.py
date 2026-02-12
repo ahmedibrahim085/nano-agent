@@ -136,9 +136,14 @@ MODEL_CAPABILITIES: dict[str, ModelCapability] = {
     ),
     # Qwen Cloud
     "coder-model": ModelCapability(
-        temperature=0.7,
+        temperature=0.7,           # Official Qwen3-Coder recommendation (unchanged)
         max_tokens=65536,
-        top_p=0.8,
+        top_p=0.8,                 # Official Qwen3-Coder recommendation (unchanged)
+        parallel_tool_calls=True,  # Enable concurrent file operations (empirically verified)
+        extra_body={
+            "top_k": 20,               # Official Qwen3-Coder recommendation
+            "repetition_penalty": 1.05, # Official Qwen3-Coder recommendation
+        },
     ),
 }
 

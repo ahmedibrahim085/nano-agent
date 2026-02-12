@@ -52,6 +52,31 @@ class TestModelCapabilityDataModel:
         with pytest.raises(ValidationError):
             ModelCapability(max_tokens=0)
 
+    def test_model_capability_new_fields_default_none(self):
+        """New optional fields default to None (backward compatible)."""
+        from nano_agent.modules.data_types import ModelCapability
+
+        cap = ModelCapability()
+        assert cap.parallel_tool_calls is None
+        assert cap.frequency_penalty is None
+        assert cap.presence_penalty is None
+        assert cap.extra_body is None
+
+    def test_model_capability_accepts_new_fields(self):
+        """ModelCapability accepts all 4 new optional fields."""
+        from nano_agent.modules.data_types import ModelCapability
+
+        cap = ModelCapability(
+            parallel_tool_calls=True,
+            frequency_penalty=0.2,
+            presence_penalty=0.1,
+            extra_body={"top_k": 40}
+        )
+        assert cap.parallel_tool_calls is True
+        assert cap.frequency_penalty == 0.2
+        assert cap.presence_penalty == 0.1
+        assert cap.extra_body == {"top_k": 40}
+
 
 class TestRegistryContents:
     """Tests for MODEL_CAPABILITIES registry completeness."""
@@ -258,6 +283,91 @@ class TestGetModelSettings:
         assert "model" in params
         assert "provider" in params
 
+    def test_get_model_settings_passes_parallel_tool_calls(self):
+        """parallel_tool_calls flows from ModelCapability to ModelSettings."""
+        from nano_agent.modules.provider_config import ProviderConfig
+        from unittest.mock import patch
+        from nano_agent.modules.data_types import ModelCapability
+
+        mock_cap = ModelCapability(parallel_tool_calls=True)
+        with patch("nano_agent.modules.provider_config.get_model_capabilities", return_value=mock_cap):
+            ms = ProviderConfig.get_model_settings("test-model", "test")
+        assert ms.parallel_tool_calls is True
+
+    def test_get_model_settings_passes_frequency_penalty(self):
+        """frequency_penalty flows from ModelCapability to ModelSettings."""
+        from nano_agent.modules.provider_config import ProviderConfig
+        from unittest.mock import patch
+        from nano_agent.modules.data_types import ModelCapability
+
+        mock_cap = ModelCapability(frequency_penalty=0.5)
+        with patch("nano_agent.modules.provider_config.get_model_capabilities", return_value=mock_cap):
+            ms = ProviderConfig.get_model_settings("test-model", "test")
+        assert ms.frequency_penalty == 0.5
+
+    def test_get_model_settings_passes_presence_penalty(self):
+        """presence_penalty flows from ModelCapability to ModelSettings."""
+        from nano_agent.modules.provider_config import ProviderConfig
+        from unittest.mock import patch
+        from nano_agent.modules.data_types import ModelCapability
+
+        mock_cap = ModelCapability(presence_penalty=0.3)
+        with patch("nano_agent.modules.provider_config.get_model_capabilities", return_value=mock_cap):
+            ms = ProviderConfig.get_model_settings("test-model", "test")
+        assert ms.presence_penalty == 0.3
+
+    def test_get_model_settings_passes_extra_body(self):
+        """extra_body dict flows from ModelCapability to ModelSettings."""
+        from nano_agent.modules.provider_config import ProviderConfig
+        from unittest.mock import patch
+        from nano_agent.modules.data_types import ModelCapability
+
+        mock_cap = ModelCapability(extra_body={"top_k": 40, "repetition_penalty": 1.05})
+        with patch("nano_agent.modules.provider_config.get_model_capabilities", return_value=mock_cap):
+            ms = ProviderConfig.get_model_settings("test-model", "test")
+        assert ms.extra_body == {"top_k": 40, "repetition_penalty": 1.05}
+
+    def test_get_model_settings_passes_parallel_tool_calls_false(self):
+        """parallel_tool_calls=False flows through (disable, not omit)."""
+        from nano_agent.modules.provider_config import ProviderConfig
+        from unittest.mock import patch
+        from nano_agent.modules.data_types import ModelCapability
+
+        mock_cap = ModelCapability(parallel_tool_calls=False)
+        with patch("nano_agent.modules.provider_config.get_model_capabilities", return_value=mock_cap):
+            ms = ProviderConfig.get_model_settings("test-model", "test")
+        assert ms.parallel_tool_calls is False  # False, not None
+
+    def test_get_model_settings_none_fields_not_sent(self):
+        """None fields are not passed to ModelSettings (backward compat)."""
+        from nano_agent.modules.provider_config import ProviderConfig
+        from unittest.mock import patch
+        from nano_agent.modules.data_types import ModelCapability
+
+        mock_cap = ModelCapability()  # All new fields default to None
+        with patch("nano_agent.modules.provider_config.get_model_capabilities", return_value=mock_cap):
+            ms = ProviderConfig.get_model_settings("test-model", "test")
+        assert ms.parallel_tool_calls is None
+        assert ms.frequency_penalty is None
+        assert ms.presence_penalty is None
+        assert ms.extra_body is None
+
+    def test_get_model_settings_existing_models_unchanged(self):
+        """Existing models (gpt-5-mini, glm-4.7) produce identical ModelSettings."""
+        from nano_agent.modules.provider_config import ProviderConfig
+
+        # GPT-5-mini: no new fields → all None
+        ms = ProviderConfig.get_model_settings("gpt-5-mini", "openai")
+        assert ms.parallel_tool_calls is None
+        assert ms.frequency_penalty is None
+        assert ms.presence_penalty is None
+        assert ms.extra_body is None
+
+        # GLM-4.7: has top_p but no new fields
+        ms = ProviderConfig.get_model_settings("glm-4.7", "zai")
+        assert ms.parallel_tool_calls is None
+        assert ms.extra_body is None
+
 
 # ── Phase 4: Review hardening — regression guards + integration + edge cases ──
 
@@ -374,6 +484,69 @@ class TestBoundaryValues:
         with pytest.raises(ValidationError):
             ModelCapability(max_tokens=-1)
 
+    def test_frequency_penalty_min_boundary(self):
+        """frequency_penalty=-2.0 is valid (ge=-2.0 boundary)."""
+        from nano_agent.modules.data_types import ModelCapability
+
+        assert ModelCapability(frequency_penalty=-2.0).frequency_penalty == -2.0
+
+    def test_frequency_penalty_max_boundary(self):
+        """frequency_penalty=2.0 is valid (le=2.0 boundary)."""
+        from nano_agent.modules.data_types import ModelCapability
+
+        assert ModelCapability(frequency_penalty=2.0).frequency_penalty == 2.0
+
+    def test_frequency_penalty_out_of_range_rejected(self):
+        """frequency_penalty=2.01 is rejected."""
+        from nano_agent.modules.data_types import ModelCapability
+
+        with pytest.raises(ValidationError):
+            ModelCapability(frequency_penalty=2.01)
+
+    def test_presence_penalty_boundaries(self):
+        """presence_penalty boundaries: -2.0 and 2.0 both valid, 2.01 rejected."""
+        from nano_agent.modules.data_types import ModelCapability
+
+        assert ModelCapability(presence_penalty=-2.0).presence_penalty == -2.0
+        assert ModelCapability(presence_penalty=2.0).presence_penalty == 2.0
+        with pytest.raises(ValidationError):
+            ModelCapability(presence_penalty=2.01)
+
+    def test_extra_body_accepts_arbitrary_dict(self):
+        """extra_body accepts any dict structure."""
+        from nano_agent.modules.data_types import ModelCapability
+
+        cap = ModelCapability(extra_body={
+            "top_k": 40,
+            "repetition_penalty": 1.05,
+            "nested": {"key": "value"}
+        })
+        assert cap.extra_body["top_k"] == 40
+        assert cap.extra_body["repetition_penalty"] == 1.05
+
+    def test_extra_body_empty_dict_valid(self):
+        """extra_body={} is valid — distinct from None (no extra params)."""
+        from nano_agent.modules.data_types import ModelCapability
+
+        cap = ModelCapability(extra_body={})
+        assert cap.extra_body == {}
+        assert cap.extra_body is not None
+
+    def test_extra_body_invalid_type_rejected(self):
+        """extra_body must be a dict, not a string."""
+        from nano_agent.modules.data_types import ModelCapability
+
+        with pytest.raises(ValidationError):
+            ModelCapability(extra_body="not a dict")
+
+    def test_frequency_penalty_zero_is_valid(self):
+        """frequency_penalty=0.0 is valid (distinct from None = don't send)."""
+        from nano_agent.modules.data_types import ModelCapability
+
+        cap = ModelCapability(frequency_penalty=0.0)
+        assert cap.frequency_penalty == 0.0
+        assert cap.frequency_penalty is not None  # 0.0 != None
+
 
 # ── Phase 5: Qwen Cloud provider registration ──
 
@@ -388,14 +561,17 @@ class TestQwenRegistration:
         assert "coder-model" in MODEL_CAPABILITIES
 
     def test_coder_model_capabilities(self):
-        """coder-model has correct capability values."""
+        """coder-model has official Qwen3-Coder values + parallel_tool_calls."""
         from nano_agent.modules.constants import MODEL_CAPABILITIES
 
         cap = MODEL_CAPABILITIES["coder-model"]
-        assert cap.temperature == 0.7
+        assert cap.temperature == 0.7          # Official Qwen3-Coder recommendation
         assert cap.max_tokens == 65536
-        assert cap.top_p == 0.8
+        assert cap.top_p == 0.8               # Official Qwen3-Coder recommendation
         assert cap.supports_tools is True
+        assert cap.parallel_tool_calls is True  # NEW: concurrent file ops
+        assert cap.frequency_penalty is None    # Not recommended by vendor
+        assert cap.presence_penalty is None     # Not recommended by vendor
 
     def test_qwen_provider_requirements_is_none(self):
         """Qwen uses file-based OAuth, not env var."""
@@ -423,13 +599,43 @@ class TestQwenRegistration:
         req = LaunchAgentRequest(agentic_prompt="test", agent_path="/tmp", provider="qwen")
         assert req.provider == "qwen"
 
+    def test_coder_model_extra_body(self):
+        """coder-model has official Qwen3-Coder extra_body params."""
+        from nano_agent.modules.constants import MODEL_CAPABILITIES
+
+        cap = MODEL_CAPABILITIES["coder-model"]
+        assert cap.extra_body is not None
+        assert cap.extra_body["top_k"] == 20              # Official recommendation
+        assert cap.extra_body["repetition_penalty"] == 1.05  # Official recommendation
+
     def test_get_model_settings_coder_model(self):
-        """coder-model gets correct ModelSettings from registry."""
+        """coder-model gets correct ModelSettings from registry (full pipeline)."""
         from nano_agent.modules.provider_config import ProviderConfig
         from agents import ModelSettings
 
         ms = ProviderConfig.get_model_settings("coder-model", "qwen")
         assert isinstance(ms, ModelSettings)
+        # Standard fields (unchanged vendor defaults)
         assert ms.temperature == 0.7
         assert ms.max_tokens == 65536
         assert ms.top_p == 0.8
+        # New fields
+        assert ms.parallel_tool_calls is True
+        assert ms.frequency_penalty is None    # Not set
+        assert ms.presence_penalty is None     # Not set
+        # Provider-specific via extra_body
+        assert ms.extra_body == {"top_k": 20, "repetition_penalty": 1.05}
+
+    def test_coder_model_settings_reach_api(self):
+        """Verify new settings would reach the API call correctly."""
+        from nano_agent.modules.provider_config import ProviderConfig
+
+        ms = ProviderConfig.get_model_settings("coder-model", "qwen")
+        # parallel_tool_calls=True (truthy + tools → True in SDK)
+        assert ms.parallel_tool_calls is True
+        # extra_body passed directly to API (top_k and repetition_penalty)
+        assert ms.extra_body is not None
+        assert len(ms.extra_body) == 2
+        # frequency/presence penalty not set → None → omitted by SDK
+        assert ms.frequency_penalty is None
+        assert ms.presence_penalty is None

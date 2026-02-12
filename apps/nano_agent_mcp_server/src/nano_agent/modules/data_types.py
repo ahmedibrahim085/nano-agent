@@ -123,6 +123,26 @@ class ModelCapability(BaseModel):
         ge=0.0, le=1.0,
         description="Top-p sampling (None = use model default)"
     )
+    # Standard OpenAI parameters (None = don't send, use provider default)
+    parallel_tool_calls: Optional[bool] = Field(
+        default=None,
+        description="Enable parallel tool calls (None = provider default)"
+    )
+    frequency_penalty: Optional[float] = Field(
+        default=None,
+        ge=-2.0, le=2.0,
+        description="Frequency penalty [-2.0, 2.0] (None = don't send)"
+    )
+    presence_penalty: Optional[float] = Field(
+        default=None,
+        ge=-2.0, le=2.0,
+        description="Presence penalty [-2.0, 2.0] (None = don't send)"
+    )
+    # Provider-specific parameters passed directly to API via extra_body
+    extra_body: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Provider-specific params passed as extra_body to API call"
+    )
 
 
 class CheckProvidersResponse(BaseModel):

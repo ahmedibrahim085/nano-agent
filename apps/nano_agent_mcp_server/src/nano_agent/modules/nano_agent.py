@@ -39,8 +39,6 @@ from .constants import (
     DEFAULT_MODEL,
     DEFAULT_PROVIDER,
     MAX_AGENT_TURNS,
-    DEFAULT_TEMPERATURE,
-    MAX_TOKENS,
     AVAILABLE_TOOLS,
     AVAILABLE_MODELS,
     NANO_AGENT_SYSTEM_PROMPT,
@@ -328,7 +326,16 @@ async def _execute_nano_agent_async(request: PromptNanoAgentRequest, enable_rich
                 error=error_msg,
                 execution_time_seconds=time.time() - start_time
             )
-        
+
+        # Pre-flight: check tool support
+        tools_ok, tools_err = ProviderConfig.validate_tool_support(request.model)
+        if not tools_ok:
+            return PromptNanoAgentResponse(
+                success=False,
+                error=tools_err,
+                execution_time_seconds=time.time() - start_time
+            )
+
         # Setup provider-specific configurations
         ProviderConfig.setup_provider(request.provider)
 
@@ -339,17 +346,10 @@ async def _execute_nano_agent_async(request: PromptNanoAgentRequest, enable_rich
         # Get tools for the agent
         tools = get_nano_agent_tools()
 
-        # Configure model settings based on model capabilities
-        base_settings = {
-            "temperature": DEFAULT_TEMPERATURE,
-            "max_tokens": MAX_TOKENS
-        }
-
-        # Get filtered settings for the specific model
+        # Configure model settings from per-model capabilities registry
         model_settings = ProviderConfig.get_model_settings(
             model=request.model,
             provider=request.provider,
-            base_settings=base_settings
         )
 
         # Build instructions with workspace context
@@ -474,7 +474,16 @@ def _execute_nano_agent(request: PromptNanoAgentRequest, enable_rich_logging: bo
                 error=error_msg,
                 execution_time_seconds=time.time() - start_time
             )
-        
+
+        # Pre-flight: check tool support
+        tools_ok, tools_err = ProviderConfig.validate_tool_support(request.model)
+        if not tools_ok:
+            return PromptNanoAgentResponse(
+                success=False,
+                error=tools_err,
+                execution_time_seconds=time.time() - start_time
+            )
+
         # Setup provider-specific configurations
         ProviderConfig.setup_provider(request.provider)
 
@@ -482,17 +491,10 @@ def _execute_nano_agent(request: PromptNanoAgentRequest, enable_rich_logging: bo
         workspace_path = set_workspace(request.workspace)
         logger.info(f"Agent workspace: {workspace_path}")
 
-        # Configure model settings based on model capabilities
-        base_settings = {
-            "temperature": DEFAULT_TEMPERATURE,
-            "max_tokens": MAX_TOKENS
-        }
-
-        # Get filtered settings for the specific model
+        # Configure model settings from per-model capabilities registry
         model_settings = ProviderConfig.get_model_settings(
             model=request.model,
             provider=request.provider,
-            base_settings=base_settings
         )
 
         # Build instructions with workspace context

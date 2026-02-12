@@ -36,38 +36,45 @@ class ProviderConfig:
     """Configuration for different model providers."""
     
     @staticmethod
-    def get_model_settings(model: str, provider: str, base_settings: dict) -> ModelSettings:
-        """Get appropriate model settings for a given model and provider.
-        
-        Args:
-            model: Model identifier
-            provider: Provider name
-            base_settings: Base settings dictionary with temperature, max_tokens, etc.
-            
+    def validate_tool_support(model: str) -> tuple[bool, str | None]:
+        """Check if a model supports tool calling.
+
         Returns:
-            ModelSettings configured appropriately for the model
+            (True, None) if model supports tools.
+            (False, error_message) if model does NOT support tools.
         """
-        # Filter settings based on model capabilities
-        filtered_settings = {}
-        
-        # GPT-5 models have special requirements
-        if model.startswith("gpt-5"):
-            logger.debug(f"Configuring GPT-5 model {model} - using max_completion_tokens")
-            # GPT-5 uses max_completion_tokens instead of max_tokens
-            if "max_tokens" in base_settings:
-                filtered_settings["max_completion_tokens"] = base_settings["max_tokens"]
-            # GPT-5 models only support temperature=1 (default)
-            # Don't include temperature in settings
-        else:
-            # Other models support all settings
-            filtered_settings = base_settings.copy()
-        
-        # Anthropic models use the same parameters via OpenAI-compatible endpoint
-        if provider == "anthropic":
-            pass
-        
-        logger.debug(f"Model settings for {model}: {filtered_settings}")
-        return ModelSettings(**filtered_settings)
+        from .constants import get_model_capabilities
+        caps = get_model_capabilities(model)
+        if not caps.supports_tools:
+            return False, (
+                f"Model '{model}' does not support tool calling. "
+                f"Choose a model with tool support (e.g., qwen3-coder:30b, gpt-5-mini)."
+            )
+        return True, None
+
+    @staticmethod
+    def get_model_settings(model: str, provider: str) -> ModelSettings:
+        """Build ModelSettings from the per-model capabilities registry.
+
+        Args:
+            model: Model identifier (e.g., "glm-4.7", "gpt-5-mini")
+            provider: Provider name (for logging only)
+
+        Returns:
+            ModelSettings configured for the specific model
+        """
+        from .constants import get_model_capabilities
+        caps = get_model_capabilities(model)
+
+        settings = {}
+        if caps.supports_temperature:
+            settings["temperature"] = caps.temperature
+        settings["max_tokens"] = caps.max_tokens
+        if caps.top_p is not None:
+            settings["top_p"] = caps.top_p
+
+        logger.debug(f"Model settings for {model} ({provider}): {settings}")
+        return ModelSettings(**settings)
     
     @staticmethod
     def create_agent(

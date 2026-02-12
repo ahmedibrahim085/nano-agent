@@ -44,6 +44,11 @@ MODEL_INFO = {
     "qwen3-coder:30b": "Qwen3 Coder 30B - Local coding specialist",
     "gemma3:27b": "Gemma3 27B - Google's local model",
     "magistral:latest": "Magistral 24B - Local reasoning model",
+    # Z.ai
+    "glm-4.7": "GLM-4.7 - Z.ai flagship reasoning model",
+    "glm-4.5-air": "GLM-4.5 Air - Z.ai fast model",
+    # Qwen Cloud
+    "coder-model": "Qwen Coder - Cloud coding specialist (qwen3-coder-plus)",
 }
 
 # Provider API Key Requirements
@@ -53,11 +58,16 @@ PROVIDER_REQUIREMENTS = {
     "ollama": None,  # No API key needed
     "lmstudio": None,  # No API key needed
     "zai": "Z_AI_API_KEY",  # Z.ai API key
+    "qwen": None,  # OAuth file-based auth, not env var
 }
 
 # Z.ai Configuration
 ZAI_BASE_URL = "https://api.z.ai/api/anthropic"
 ZAI_AVAILABLE_MODELS = ["glm-4.7", "glm-4.5-air"]
+
+# Qwen Cloud Configuration
+QWEN_BASE_URL = "https://portal.qwen.ai/v1"
+QWEN_AVAILABLE_MODELS = ["coder-model"]
 
 # Agent Configuration
 MAX_AGENT_TURNS = 20  # Maximum turns in agent loop
@@ -123,6 +133,12 @@ MODEL_CAPABILITIES: dict[str, ModelCapability] = {
         temperature=1.0,
         max_tokens=16000,
         top_p=0.95,
+    ),
+    # Qwen Cloud
+    "coder-model": ModelCapability(
+        temperature=0.7,
+        max_tokens=65536,
+        top_p=0.8,
     ),
 }
 
@@ -200,7 +216,7 @@ If asked about general information, respond directly without using tools.
 # Error Messages
 ERROR_NO_API_KEY = "{} environment variable is not set"
 ERROR_PROVIDER_NOT_SUPPORTED = (
-    "Provider '{}' not supported. Available providers: openai, anthropic, ollama"
+    "Provider '{}' not supported. Available providers: openai, anthropic, ollama, lmstudio, zai, qwen"
 )
 ERROR_FILE_NOT_FOUND = "Error: File not found: {}"
 ERROR_NOT_A_FILE = "Error: Path is not a file: {}"

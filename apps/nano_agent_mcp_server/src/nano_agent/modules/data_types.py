@@ -23,7 +23,7 @@ class PromptNanoAgentRequest(BaseModel):
         default="gpt-5-mini",
         description="LLM model to use for the agent"
     )
-    provider: Literal["openai", "anthropic", "ollama", "lmstudio", "zai"] = Field(
+    provider: Literal["openai", "anthropic", "ollama", "lmstudio", "zai", "qwen"] = Field(
         default="openai",
         description="LLM provider for the agent"
     )
@@ -54,7 +54,7 @@ class LaunchAgentRequest(BaseModel):
         default="gpt-5-mini",
         description="LLM model to use for the agent"
     )
-    provider: Literal["openai", "anthropic", "ollama", "lmstudio", "zai"] = Field(
+    provider: Literal["openai", "anthropic", "ollama", "lmstudio", "zai", "qwen"] = Field(
         default="openai",
         description="LLM provider for the agent"
     )
@@ -209,7 +209,7 @@ class CreateFileResponse(BaseModel):
 class AgentConfig(BaseModel):
     """Configuration for the nano agent."""
     model: str = Field(description="LLM model identifier")
-    provider: Literal["openai", "anthropic", "ollama", "lmstudio", "zai"] = Field(description="LLM provider")
+    provider: Literal["openai", "anthropic", "ollama", "lmstudio", "zai", "qwen"] = Field(description="LLM provider")
     temperature: float = Field(
         default=0.7,
         ge=0.0,

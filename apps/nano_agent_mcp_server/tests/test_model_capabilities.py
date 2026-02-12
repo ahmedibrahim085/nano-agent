@@ -61,6 +61,7 @@ class TestRegistryContents:
         from nano_agent.modules.constants import (
             AVAILABLE_MODELS,
             ZAI_AVAILABLE_MODELS,
+            QWEN_AVAILABLE_MODELS,
             MODEL_CAPABILITIES,
         )
 
@@ -68,6 +69,7 @@ class TestRegistryContents:
         for models in AVAILABLE_MODELS.values():
             all_models.update(models)
         all_models.update(ZAI_AVAILABLE_MODELS)
+        all_models.update(QWEN_AVAILABLE_MODELS)
 
         missing = all_models - set(MODEL_CAPABILITIES.keys())
         assert not missing, f"Models missing from MODEL_CAPABILITIES: {missing}"
@@ -371,3 +373,63 @@ class TestBoundaryValues:
 
         with pytest.raises(ValidationError):
             ModelCapability(max_tokens=-1)
+
+
+# ── Phase 5: Qwen Cloud provider registration ──
+
+
+class TestQwenRegistration:
+    """Tests for Qwen Cloud provider constants and type registration."""
+
+    def test_registry_has_coder_model(self):
+        """coder-model is in MODEL_CAPABILITIES."""
+        from nano_agent.modules.constants import MODEL_CAPABILITIES
+
+        assert "coder-model" in MODEL_CAPABILITIES
+
+    def test_coder_model_capabilities(self):
+        """coder-model has correct capability values."""
+        from nano_agent.modules.constants import MODEL_CAPABILITIES
+
+        cap = MODEL_CAPABILITIES["coder-model"]
+        assert cap.temperature == 0.7
+        assert cap.max_tokens == 65536
+        assert cap.top_p == 0.8
+        assert cap.supports_tools is True
+
+    def test_qwen_provider_requirements_is_none(self):
+        """Qwen uses file-based OAuth, not env var."""
+        from nano_agent.modules.constants import PROVIDER_REQUIREMENTS
+
+        assert PROVIDER_REQUIREMENTS["qwen"] is None
+
+    def test_qwen_available_models(self):
+        """QWEN_AVAILABLE_MODELS contains coder-model."""
+        from nano_agent.modules.constants import QWEN_AVAILABLE_MODELS
+
+        assert QWEN_AVAILABLE_MODELS == ["coder-model"]
+
+    def test_prompt_request_accepts_qwen_provider(self):
+        """PromptNanoAgentRequest accepts provider='qwen'."""
+        from nano_agent.modules.data_types import PromptNanoAgentRequest
+
+        req = PromptNanoAgentRequest(agentic_prompt="test", provider="qwen")
+        assert req.provider == "qwen"
+
+    def test_launch_request_accepts_qwen_provider(self):
+        """LaunchAgentRequest accepts provider='qwen'."""
+        from nano_agent.modules.data_types import LaunchAgentRequest
+
+        req = LaunchAgentRequest(agentic_prompt="test", agent_path="/tmp", provider="qwen")
+        assert req.provider == "qwen"
+
+    def test_get_model_settings_coder_model(self):
+        """coder-model gets correct ModelSettings from registry."""
+        from nano_agent.modules.provider_config import ProviderConfig
+        from agents import ModelSettings
+
+        ms = ProviderConfig.get_model_settings("coder-model", "qwen")
+        assert isinstance(ms, ModelSettings)
+        assert ms.temperature == 0.7
+        assert ms.max_tokens == 65536
+        assert ms.top_p == 0.8

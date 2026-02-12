@@ -90,7 +90,7 @@ class ProviderConfig:
             instructions: System instructions for the agent
             tools: List of tool functions
             model: Model identifier
-            provider: Provider name ('openai', 'anthropic', 'ollama')
+            provider: Provider name ('openai', 'anthropic', 'ollama', 'lmstudio', 'zai', 'qwen')
             model_settings: Optional model settings
             
         Returns:
@@ -182,6 +182,27 @@ class ProviderConfig:
                 model_settings=model_settings
             )
 
+        elif provider == "qwen":
+            # Qwen Cloud: OpenAI-compatible endpoint with OAuth token
+            from .qwen_auth import get_valid_token
+            from .constants import QWEN_BASE_URL
+            logger.debug(f"Creating Qwen Cloud agent with model: {model}")
+            token = get_valid_token()
+            qwen_client = AsyncOpenAI(
+                base_url=QWEN_BASE_URL,
+                api_key=token,
+            )
+            return Agent(
+                name=name,
+                instructions=instructions,
+                tools=tools,
+                model=OpenAIChatCompletionsModel(
+                    model=model,
+                    openai_client=qwen_client,
+                ),
+                model_settings=model_settings,
+            )
+
         else:
             raise ValueError(f"Unsupported provider: {provider}")
     
@@ -218,6 +239,16 @@ class ProviderConfig:
             required_key = provider_requirements.get(provider)
             if required_key and not os.getenv(required_key):
                 return False, f"Missing environment variable: {required_key}"
+            return True, None
+
+        # Qwen Cloud: validate model + credentials file
+        if provider == "qwen":
+            from .constants import QWEN_AVAILABLE_MODELS
+            if model not in QWEN_AVAILABLE_MODELS:
+                return False, f"Model '{model}' not available for Qwen Cloud. Available: {', '.join(QWEN_AVAILABLE_MODELS)}"
+            from .qwen_auth import QWEN_CREDS_PATH
+            if not QWEN_CREDS_PATH.exists():
+                return False, f"Qwen OAuth credentials not found at {QWEN_CREDS_PATH}. Run 'qwen' CLI to authenticate first."
             return True, None
 
         if provider in LOCAL_PROVIDER_CONFIG:
@@ -268,6 +299,16 @@ class ProviderConfig:
             required_key = provider_requirements.get(provider)
             if required_key and not os.getenv(required_key):
                 return False, f"Missing environment variable: {required_key}"
+            return True, None
+
+        # Qwen Cloud: validate model + credentials file (async)
+        if provider == "qwen":
+            from .constants import QWEN_AVAILABLE_MODELS
+            if model not in QWEN_AVAILABLE_MODELS:
+                return False, f"Model '{model}' not available for Qwen Cloud. Available: {', '.join(QWEN_AVAILABLE_MODELS)}"
+            from .qwen_auth import QWEN_CREDS_PATH
+            if not QWEN_CREDS_PATH.exists():
+                return False, f"Qwen OAuth credentials not found at {QWEN_CREDS_PATH}. Run 'qwen' CLI to authenticate first."
             return True, None
 
         if provider in LOCAL_PROVIDER_CONFIG:

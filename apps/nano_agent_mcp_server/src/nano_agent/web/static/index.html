@@ -65,7 +65,7 @@
                 <span class="w-1 h-6 bg-indigo-500 rounded-full mr-3"></span>
                 Providers
             </h2>
-            <div class="grid grid-cols-1 md:grid-cols-5 gap-4" id="providers-container">
+            <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4" id="providers-container">
                 <!-- Providers will be loaded here -->
             </div>
         </section>
@@ -343,7 +343,7 @@
         
         // Render Providers
         function renderProviders() {
-            const providerNames = ['ollama', 'lmstudio', 'openai', 'anthropic', 'zai'];
+            const providerNames = ['ollama', 'lmstudio', 'openai', 'anthropic', 'zai', 'qwen'];
             
             providersContainer.innerHTML = providerNames.map(name => {
                 const provider = providers.find(p => p.name.toLowerCase() === name);
@@ -460,7 +460,8 @@
                 'anthropic': 'bg-violet-500/20 text-violet-400 border-violet-500/30',
                 'ollama': 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
                 'lmstudio': 'bg-blue-500/20 text-blue-400 border-blue-500/30',
-                'zai': 'bg-sky-500/20 text-sky-400 border-sky-500/30'
+                'zai': 'bg-sky-500/20 text-sky-400 border-sky-500/30',
+                'qwen': 'bg-orange-500/20 text-orange-400 border-orange-500/30'
             };
             
             return providerMap[provider.toLowerCase()] || 'bg-slate-500/20 text-slate-400 border-slate-500/30';

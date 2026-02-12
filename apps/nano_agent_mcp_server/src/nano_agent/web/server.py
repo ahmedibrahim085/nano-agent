@@ -31,8 +31,11 @@ from ..modules.constants import (
     AVAILABLE_MODELS,
     ZAI_BASE_URL,
     ZAI_AVAILABLE_MODELS,
+    QWEN_BASE_URL,
+    QWEN_AVAILABLE_MODELS,
     MODEL_INFO,
 )
+from ..modules.qwen_auth import QWEN_CREDS_PATH
 from ..modules.nano_agent import prompt_nano_agent
 
 logger = logging.getLogger(__name__)
@@ -162,6 +165,11 @@ async def get_providers():
         ZAI_AVAILABLE_MODELS,
         ZAI_BASE_URL,
     ))
+    providers.append(_check_cloud_provider(
+        "qwen", None,
+        QWEN_AVAILABLE_MODELS,
+        QWEN_BASE_URL,
+    ))
 
     return {"providers": providers}
 
@@ -208,6 +216,17 @@ async def get_models():
             "type": "cloud",
             "description": MODEL_INFO.get(m, f"Z.ai {m}"),
             "status": "available" if has_zai else "no_api_key",
+        })
+
+    # Qwen Cloud
+    has_qwen = QWEN_CREDS_PATH.exists()
+    for m in QWEN_AVAILABLE_MODELS:
+        all_models.append({
+            "name": m,
+            "provider": "qwen",
+            "type": "cloud",
+            "description": MODEL_INFO.get(m, f"Qwen {m}"),
+            "status": "available" if has_qwen else "no_api_key",
         })
 
     return {"models": all_models}

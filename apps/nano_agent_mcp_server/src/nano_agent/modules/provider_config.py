@@ -458,6 +458,23 @@ async def _check_provider_health(provider: str) -> ProviderHealthStatus:
                 latency_ms=latency_ms
             )
 
+        # Qwen Cloud: OAuth credentials file check + static model list
+        elif provider == "qwen":
+            from .qwen_auth import QWEN_CREDS_PATH
+            if not QWEN_CREDS_PATH.exists():
+                return ProviderHealthStatus(
+                    status="down",
+                    available_models=[],
+                    error=f"Qwen OAuth credentials not found at {QWEN_CREDS_PATH}. Run 'qwen' CLI to authenticate first."
+                )
+            from .constants import QWEN_AVAILABLE_MODELS
+            latency_ms = (time.perf_counter() - start_time) * 1000
+            return ProviderHealthStatus(
+                status="up",
+                available_models=QWEN_AVAILABLE_MODELS,
+                latency_ms=latency_ms
+            )
+
         # Ollama: Service running check + model list
         elif provider == "ollama":
             base_url, endpoint, extract_models, start_hint = LOCAL_PROVIDER_CONFIG[provider]
@@ -571,14 +588,14 @@ async def _check_provider_health(provider: str) -> ProviderHealthStatus:
 
 
 async def check_all_providers_async() -> CheckProvidersResponse:
-    """Check health of all 5 providers concurrently.
+    """Check health of all 6 providers concurrently.
 
     Returns:
         CheckProvidersResponse with status for all providers
     """
     start_time = time.perf_counter()
 
-    providers = ["openai", "anthropic", "ollama", "lmstudio", "zai"]
+    providers = ["openai", "anthropic", "ollama", "lmstudio", "zai", "qwen"]
     tasks = [_check_provider_health(p) for p in providers]
 
     # Execute all checks concurrently

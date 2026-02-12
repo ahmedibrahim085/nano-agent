@@ -128,7 +128,7 @@ class TestValidateSetupQwen:
             )
 
         assert ok is False
-        assert "not found" in err
+        assert "not found" in err.lower()
 
 
 # --- validate_provider_setup_async Tests (7-9) ---
@@ -169,3 +169,37 @@ class TestValidateSetupAsyncQwen:
 
         assert ok is False
         assert "not found" in err
+
+
+# --- Health Check Tests (10-11) ---
+
+
+class TestHealthCheckQwen:
+    @pytest.mark.asyncio
+    async def test_health_qwen_up(self):
+        """Qwen up when creds file exists."""
+        from nano_agent.modules.provider_config import _check_provider_health
+
+        with patch("nano_agent.modules.qwen_auth.QWEN_CREDS_PATH") as mock_path:
+            mock_path.exists.return_value = True
+
+            result = await _check_provider_health("qwen")
+
+        assert result.status == "up"
+        assert result.available_models == QWEN_AVAILABLE_MODELS
+        assert result.latency_ms >= 0
+        assert result.error is None
+
+    @pytest.mark.asyncio
+    async def test_health_qwen_down_no_creds(self):
+        """Qwen down when creds file missing."""
+        from nano_agent.modules.provider_config import _check_provider_health
+
+        with patch("nano_agent.modules.qwen_auth.QWEN_CREDS_PATH") as mock_path:
+            mock_path.exists.return_value = False
+
+            result = await _check_provider_health("qwen")
+
+        assert result.status == "down"
+        assert result.available_models == []
+        assert "not found" in result.error

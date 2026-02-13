@@ -19,7 +19,10 @@ from nano_agent.modules.nano_agent_tools import (
     list_files,
     get_file_metadata,
     search_files_raw,
-    set_workspace
+    set_workspace,
+    _raw_run_tests,
+    _detect_test_framework,
+    FRAMEWORK_COMMANDS
 )
 from nano_agent.modules.data_types import (
     ReadFileRequest,
@@ -388,3 +391,64 @@ class TestSearchFiles:
         result = search_files_raw("unique_search_term")
         assert "target.txt" in result
         assert "unique_search_term" in result
+
+
+class TestRunTests:
+    """Test the run_tests tool."""
+
+    def test_detect_test_framework_pytest_conftest(self, tmp_path):
+        """Detect pytest from conftest.py."""
+        (tmp_path / "conftest.py").write_text("")
+        assert _detect_test_framework(str(tmp_path)) == "pytest"
+
+    def test_detect_test_framework_pytest_pyproject(self, tmp_path):
+        """Detect pytest from pyproject.toml with [tool.pytest]."""
+        (tmp_path / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
+        assert _detect_test_framework(str(tmp_path)) == "pytest"
+
+    def test_detect_test_framework_npm(self, tmp_path):
+        """Detect npm from package.json."""
+        (tmp_path / "package.json").write_text('{"scripts": {"test": "jest"}}')
+        assert _detect_test_framework(str(tmp_path)) == "npm"
+
+    def test_detect_test_framework_cargo(self, tmp_path):
+        """Detect cargo from Cargo.toml."""
+        (tmp_path / "Cargo.toml").write_text("[package]\n")
+        assert _detect_test_framework(str(tmp_path)) == "cargo"
+
+    def test_detect_test_framework_fallback_pytest(self, tmp_path):
+        """Fall back to pytest when no markers found."""
+        assert _detect_test_framework(str(tmp_path)) == "pytest"
+
+    @pytest.mark.asyncio
+    async def test_run_tests_explicit_pytest(self, tmp_path):
+        """Run pytest explicitly on a passing test file."""
+        set_workspace(str(tmp_path))
+        # Create a minimal passing test
+        (tmp_path / "test_sample.py").write_text(
+            "def test_ok():\n    assert 1 + 1 == 2\n"
+        )
+        result = await _raw_run_tests(str(tmp_path), "pytest")
+        assert "passed" in result.lower() or "1 passed" in result
+
+    @pytest.mark.asyncio
+    async def test_run_tests_test_failure(self, tmp_path):
+        """Test failure output is returned (not raised as error)."""
+        set_workspace(str(tmp_path))
+        (tmp_path / "test_fail.py").write_text(
+            "def test_bad():\n    assert False\n"
+        )
+        result = await _raw_run_tests(str(tmp_path), "pytest")
+        # Should contain failure info, NOT be an error string
+        assert "failed" in result.lower() or "FAILED" in result
+
+    @pytest.mark.asyncio
+    async def test_run_tests_auto_detect_pytest(self, tmp_path):
+        """Auto-detect pytest and run."""
+        set_workspace(str(tmp_path))
+        (tmp_path / "conftest.py").write_text("")
+        (tmp_path / "test_auto.py").write_text(
+            "def test_auto():\n    assert True\n"
+        )
+        result = await _raw_run_tests(str(tmp_path), "auto")
+        assert "passed" in result.lower()

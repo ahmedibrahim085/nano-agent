@@ -786,6 +786,138 @@ def search_files(pattern: str, directory: str = ".", file_glob: str = "*") -> st
     return search_files_raw(pattern, directory, file_glob)
 
 
+# Test framework detection and execution
+
+FRAMEWORK_COMMANDS = {
+    "pytest": "python -m pytest",
+    "unittest": "python -m unittest discover",
+    "npm": "npm test",
+    "jest": "npx jest",
+    "cargo": "cargo test",
+}
+
+
+def _detect_test_framework(workspace: str) -> str:
+    """Auto-detect test framework from workspace markers.
+
+    Priority: pytest markers > package.json > Cargo.toml > fallback pytest.
+    """
+    ws = Path(workspace)
+    if (ws / "pytest.ini").exists() or (ws / "conftest.py").exists():
+        return "pytest"
+    if (ws / "pyproject.toml").exists():
+        try:
+            content = (ws / "pyproject.toml").read_text()
+            if "[tool.pytest" in content:
+                return "pytest"
+        except Exception:
+            pass
+    if (ws / "setup.cfg").exists():
+        try:
+            content = (ws / "setup.cfg").read_text()
+            if "[tool:pytest]" in content:
+                return "pytest"
+        except Exception:
+            pass
+    if (ws / "package.json").exists():
+        return "npm"
+    if (ws / "Cargo.toml").exists():
+        return "cargo"
+    return "pytest"  # Default fallback
+
+
+async def _raw_run_tests(test_path: str = ".", framework: str = "auto") -> str:
+    """Raw implementation for run_tests tool.
+
+    Args:
+        test_path: Path to test file or directory
+        framework: Test framework: "auto", "pytest", "unittest", "npm", "jest", "cargo"
+
+    Returns:
+        Test output (both pass and fail cases) or error message.
+    """
+    workspace = get_workspace()
+    if test_path == ".":
+        target = workspace
+    else:
+        target = resolve_path(test_path)
+
+    if not target.exists():
+        return f"Error: Test path not found: {test_path}"
+
+    # Detect framework
+    if framework == "auto":
+        detect_dir = target if target.is_dir() else target.parent
+        framework = _detect_test_framework(str(detect_dir))
+
+    if framework not in FRAMEWORK_COMMANDS:
+        return f"Error: Unknown test framework '{framework}'. Supported: {', '.join(FRAMEWORK_COMMANDS.keys())}"
+
+    # Build command
+    base_cmd = FRAMEWORK_COMMANDS[framework]
+    if target.is_file():
+        command = f"{base_cmd} {target}"
+    elif target == workspace:
+        command = base_cmd
+    else:
+        command = f"{base_cmd} {target}"
+
+    # Execute tests in the target directory
+    run_dir = target if target.is_dir() else target.parent
+
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            command,
+            cwd=str(run_dir),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=os.environ.copy(),
+        )
+
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=COMMAND_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.communicate()
+            return f"Error: Tests timed out after {COMMAND_TIMEOUT_SECONDS}s"
+
+        stdout = stdout_bytes.decode("utf-8", errors="ignore")
+        stderr = stderr_bytes.decode("utf-8", errors="ignore")
+
+        parts = []
+        if stdout.strip():
+            parts.append(stdout.strip())
+        if stderr.strip():
+            parts.append(f"stderr:\n{stderr.strip()}")
+        parts.append(f"[exit_code: {proc.returncode}]")
+
+        result = "\n".join(parts)
+        # Truncate same as bash tool
+        if len(result) > BASH_OUTPUT_MAX_CHARS:
+            head = int(BASH_OUTPUT_MAX_CHARS * BASH_OUTPUT_HEAD_RATIO)
+            tail = int(BASH_OUTPUT_MAX_CHARS * BASH_OUTPUT_TAIL_RATIO)
+            result = result[:head] + "\n...(truncated)...\n" + result[-tail:]
+        return result
+
+    except Exception as e:
+        return f"Error executing tests: {str(e)}"
+
+
+@function_tool
+async def run_tests(test_path: str = ".", framework: str = "auto") -> str:
+    """Run tests in the workspace. Auto-detects test framework if not specified.
+
+    Args:
+        test_path: Path to test file or directory (default: workspace root)
+        framework: Test framework: "auto", "pytest", "unittest", "npm", "jest", "cargo"
+    """
+    capture_args("run_tests", test_path=test_path, framework=framework)
+    return await _raw_run_tests(test_path, framework)
+
+
 # Export all tools for the agent
 def get_nano_agent_tools():
     """

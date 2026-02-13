@@ -52,7 +52,7 @@ All tools use `@function_tool` decorator (universal compatibility across all pro
 
 ### Why `@function_tool` Over `ShellTool`?
 
-`ShellTool` and `ApplyPatchTool` use OpenAI's proprietary `LocalShellCall`/`LocalShellOutput` protocol. They only work with OpenAI models. `@function_tool` uses standard function calling — works universally across all 5 providers. This was a critical architectural decision.
+`ShellTool` and `ApplyPatchTool` use OpenAI's proprietary `LocalShellCall`/`LocalShellOutput` protocol. They only work with OpenAI models. `@function_tool` uses standard function calling — works universally across all 6 providers. This was a critical architectural decision.
 
 ### Workspace Isolation
 
@@ -67,7 +67,7 @@ Shell commands run with `cwd=workspace_dir`. Module-level `_workspace_dir` varia
 
 ### 6 Sections
 
-1. **Providers** — Shows 5 providers with status indicators
+1. **Providers** — Shows 6 providers with status indicators
 2. **Models** — Lists available models per provider (dynamic for Ollama/LM Studio)
 3. **Playground** — Execute prompts with any provider/model, streaming-style output
 4. **History** — In-memory execution log (max 100), shows timing, tokens, metadata
@@ -104,7 +104,7 @@ apps/nano_agent_mcp_server/
 │   │   ├── files.py         # Path resolution utilities (resolve_path, is_path_safe)
 │   │   ├── nano_agent.py    # Core: prompt_nano_agent(), _execute_nano_agent_async(), RichLoggingHooks
 │   │   ├── nano_agent_tools.py  # 6 @function_tool definitions + workspace management
-│   │   └── provider_config.py   # ProviderConfig.create_agent() — 5-provider factory
+│   │   └── provider_config.py   # ProviderConfig.create_agent() — 6-provider factory
 │   └── web/
 │       ├── __init__.py
 │       ├── server.py        # FastAPI dashboard backend (10 routes)
@@ -148,7 +148,7 @@ apps/nano_agent_mcp_server/
 
 | Decision | Why | Alternative Considered |
 |----------|-----|----------------------|
-| `@function_tool` for all tools | Universal compatibility across 5 providers | `ShellTool`/`ApplyPatchTool` — OpenAI-only |
+| `@function_tool` for all tools | Universal compatibility across 6 providers | `ShellTool`/`ApplyPatchTool` — OpenAI-only |
 | `LitellmModel` for Z.ai | Bridges Anthropic protocol to OpenAI Agent SDK | Native Anthropic SDK — incompatible with Agent SDK |
 | Module-level `_workspace_dir` | Simple, per-invocation isolation | Class-based workspace — over-engineered for single-tool context |
 | In-memory execution history | Simple, no persistence needed for dev tool | SQLite/file-based — YAGNI |
@@ -223,7 +223,7 @@ cd apps/nano_agent_mcp_server && uv tool install -e . --force
 
 ## 12. What's Working (Verified)
 
-- [x] All 5 providers create agents correctly
+- [x] All 6 providers create agents correctly
 - [x] Z.ai GLM-4.7 can use tools (write_file, bash verified)
 - [x] Web dashboard all 6 features functional (E2E tested with screenshots)
 - [x] `bash` with workspace isolation works (persistent CWD across calls)

@@ -1,7 +1,7 @@
 # Nano-Agent Project Instructions
 
 ## Overview
-MCP server that delegates tasks from Claude Code to subagents on 5 LLM providers (OpenAI, Anthropic, Ollama, LM Studio, Z.ai). Built on OpenAI Agent SDK.
+MCP server that delegates tasks from Claude Code to subagents on 6 LLM providers (OpenAI, Anthropic, Ollama, LM Studio, Z.ai, Qwen). Built on OpenAI Agent SDK.
 
 ## Quick Reference
 - **Package**: `apps/nano_agent_mcp_server/`
@@ -25,7 +25,7 @@ apps/nano_agent_mcp_server/src/nano_agent/
 │   ├── data_types.py        # Pydantic models
 │   ├── nano_agent.py        # Core agent execution
 │   ├── nano_agent_tools.py  # 6 @function_tool definitions
-│   └── provider_config.py   # 5-provider factory
+│   └── provider_config.py   # 6-provider factory
 └── web/
     ├── server.py            # FastAPI backend
     └── static/index.html    # Dashboard frontend

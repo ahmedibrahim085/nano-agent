@@ -113,6 +113,44 @@ mcp__nano-agent__prompt_nano_agent(
 
 ---
 
+# Release: run_tests Coverage Gaps
+
+**Branch**: `test/run-tests-missing-coverage`
+**Base**: `main` (post tool-resilience merge)
+**Date**: 2026-02-13
+**Commits**: 3 | **Files changed**: 1 | **+100 / -2 lines**
+
+## Summary
+
+Pure test additions closing 3 coverage gaps in the `run_tests` agent tool identified during tool-resilience verification. No production code changes.
+
+## Tests Added
+
+### `test_run_tests_npm_execution`
+Tests the full npm execution path: `package.json` auto-detection → `"npm test"` command build → subprocess → output assembly. Uses mocked `asyncio.create_subprocess_shell` to avoid npm dependency. Verifies command string references `FRAMEWORK_COMMANDS["npm"]` constant and CWD is set to workspace.
+
+### `test_run_tests_timeout_kills_process`
+Tests `asyncio.wait_for` timeout handling (lines 893-901 of `nano_agent_tools.py`). Mock subprocess hangs forever; `COMMAND_TIMEOUT_SECONDS` patched to 0.01s. Verifies: `proc.kill()` called, cleanup `communicate()` called after kill, error message contains correct timeout value.
+
+### `test_run_tests_specific_file_target`
+Tests the `target.is_file()` branch (line 874) — all previous tests only passed directories. Creates two test files (one passing, one failing), targets only the passing file. Asserts positive proof (1 passed, exit_code 0) and negative proof (`"THIS_SHOULD_NOT_RUN"` not in output).
+
+## Commits
+
+| # | Hash | Message |
+|---|------|---------|
+| 1 | `fef5e67` | test(run_tests): add npm execution test covering full async path |
+| 2 | `62ff147` | test(run_tests): add timeout behavior test with kill verification |
+| 3 | `a5474dc` | test(run_tests): add specific-file targeting test with negative proof |
+
+## Files Changed
+
+```
+test_nano_agent_tools.py | 102 +++  (3 new test methods + import changes)
+```
+
+---
+
 # Release: Tool Resilience
 
 **Branch**: `feat/tool-resilience`
@@ -465,6 +503,81 @@ Results: 9 issues identified → 6 fixed → 3 deferred (documented below).
 
 ---
 
+# Release: MODEL_CAPABILITIES Registry
+
+**Branch**: `feat/model-capabilities`
+**Base**: `main` (post bash-tool-rename merge)
+**Date**: February 2026
+**Commits**: 3 | **Files changed**: 5 | **+537 / -52 lines**
+
+## Summary
+
+Introduces a centralized `MODEL_CAPABILITIES` registry and `ModelCapability` data model for per-model configuration. Before this release, model-specific settings (temperature, max_tokens, tool support) were scattered across `get_model_settings()` branches with hardcoded values. Now every model has a declarative capability entry, and a pipeline validates tool support before agent creation.
+
+## What Changed
+
+### `ModelCapability` Data Model (`data_types.py`)
+
+New Pydantic model with validated fields:
+
+| Field | Type | Default | Purpose |
+|-------|------|---------|---------|
+| `temperature` | `float` | 0.2 | Default temperature (0.0–2.0) |
+| `max_tokens` | `int` | 16000 | Maximum output tokens (>0) |
+| `supports_tools` | `bool` | True | Whether model supports tool calling |
+| `supports_temperature` | `bool` | True | Whether model accepts temperature |
+| `top_p` | `Optional[float]` | None | Nucleus sampling threshold |
+
+### `MODEL_CAPABILITIES` Registry (`constants.py`)
+
+Centralized dict mapping model IDs to `ModelCapability` entries. Covers all 14 models across 5 providers at the time of creation:
+
+- **OpenAI**: gpt-5, gpt-5-mini, gpt-5-nano, gpt-4o
+- **Anthropic**: claude-opus-4-1, claude-opus-4, claude-sonnet-4, claude-3-haiku
+- **Ollama**: gpt-oss:20b, gpt-oss:120b, qwen3-coder:30b, gemma3:27b, magistral
+- **Z.ai**: glm-4.7, glm-4.5-air
+
+Unknown models fall back to `DEFAULT_MODEL_CAPABILITY` (temperature=0.2, max_tokens=16000).
+
+### Pre-flight Tool Support Validation (`provider_config.py`)
+
+`ProviderConfig.validate_tool_support(model)` checks `supports_tools` before agent creation. Models like `gemma3:27b` (no tool support) are rejected early with a descriptive error instead of crashing mid-execution.
+
+### Review Hardening
+
+Post-review commit added:
+- `logging` import and warnings for unknown models
+- Top-level imports for `ModelCapability` and `get_model_capabilities`
+- 12 additional regression tests for boundary cases
+
+## Test Coverage
+
+| Test File | Tests | Coverage |
+|-----------|-------|----------|
+| `test_model_capabilities.py` | 38 | Registry contents, tool validation, ModelSettings pipeline, integration |
+
+All 38 tests passing. Zero regressions in full suite.
+
+## Commits
+
+| # | Hash | Message |
+|---|------|---------|
+| 1 | `525edb5` | feat: add ModelCapability model and MODEL_CAPABILITIES registry |
+| 2 | `1abc2e5` | feat: add pre-flight tool support validation for models |
+| 3 | `7830600` | fix: review hardening — add logging, promote imports, add 12 regression tests |
+
+## Files Changed
+
+```
+constants.py              |  82 ++++-  (MODEL_CAPABILITIES registry, get_model_capabilities)
+data_types.py             |  27 +++   (ModelCapability model)
+nano_agent.py             |  42 +--   (use registry instead of hardcoded values)
+provider_config.py        |  65 ++--  (validate_tool_support, pipeline refactor)
+test_model_capabilities.py| 373 +++   (NEW — 38 tests)
+```
+
+---
+
 # Release: `bash` Tool — Rename, 30K Output, Persistent CWD
 
 **Branch**: `feat/bash-tool-rename`
@@ -576,3 +689,224 @@ Zero regressions in full test suite (40 pre-existing failures unchanged).
 | `tests/test_bash_tool.py` | +264 (new) | 19 tests |
 | `CLAUDE.md` | +1/-1 | Reference update |
 | `KNOWLEDGE_TRANSFER.md` | +4/-4 | Reference updates |
+
+---
+
+# Release: Provider Health Check (US-002)
+
+**Branch**: `feat/US-002-provider-health`
+**Base**: `main` (post US-010 merge)
+**Date**: February 2026
+**Commits**: 4 | **Files changed**: 7 | **+1006 / -449 lines**
+
+## Summary
+
+Adds a `check_providers` MCP tool that performs concurrent health checks across all configured LLM providers. Reports status (up/down/partial), available models, latency, and errors for each provider. This gives users instant visibility into which providers are operational before dispatching agent tasks.
+
+## What Changed
+
+### `check_providers` MCP Tool (`__main__.py`)
+
+New MCP-registered tool callable from Claude Code:
+
+```python
+mcp__nano-agent__check_providers()
+```
+
+Returns a structured response with per-provider health status, total check time, and summary counts (providers_up, providers_down, providers_partial).
+
+### Health Check Engine (`provider_config.py`)
+
+`_check_provider_health(provider)` — async function that checks each provider's reachability:
+
+- **Cloud providers** (OpenAI, Anthropic, Z.ai): Verifies API keys exist and endpoints respond
+- **Local providers** (Ollama, LM Studio): Checks if the service is running and lists loaded models
+- All 5 providers checked concurrently via `asyncio.gather()`
+- Each check has independent timeout handling
+
+`check_all_providers_async()` — orchestrates concurrent checks and assembles the response.
+
+### Pydantic Models (`data_types.py`)
+
+| Model | Purpose |
+|-------|---------|
+| `ProviderHealthStatus` | Per-provider status (status, models, latency, error) |
+| `CheckProvidersResponse` | Aggregated response with summary counts |
+
+### `ProviderConfig` Refactor
+
+`LOCAL_PROVIDER_CONFIG` extracted as a module-level dict for provider-specific configuration (ports, model list endpoints). This eliminated hardcoded values scattered across validation methods.
+
+## Test Coverage
+
+| Test File | Tests | Coverage |
+|-----------|-------|----------|
+| `test_provider_health.py` | 28 | Individual provider checks, concurrent execution, error handling, response models |
+
+All 28 tests passing. Zero regressions.
+
+## Commits
+
+| # | Hash | Message |
+|---|------|---------|
+| 1 | `8d464cf` | feat(US-002): add health check Pydantic models |
+| 2 | `9f129f0` | feat(US-002): add health check engine with LOCAL_PROVIDER_CONFIG refactor |
+| 3 | `9095695` | feat(US-002): add check_providers MCP tool and register it |
+| 4 | `ed0b43d` | test(US-002): add 28 provider health check tests |
+
+## Files Changed
+
+```
+__main__.py          |  14 ++-   (register check_providers MCP tool)
+provider_config.py   | 326 +++    (health check engine, LOCAL_PROVIDER_CONFIG)
+data_types.py        |  77 +--   (ProviderHealthStatus, CheckProvidersResponse)
+nano_agent.py        | 167 +--   (refactor to use ProviderConfig)
+test_provider_health.py | 591 +++ (NEW — 28 tests)
+agent_identity.py    |  83 ---   (moved from US-010 — consolidated)
+test_agent_identity.py | 197 --- (moved — consolidated into provider tests)
+```
+
+---
+
+# Release: launch_agent MCP Tool (US-010)
+
+**Branch**: `feat/US-010-launch-agent`
+**Base**: `main` (post concurrency fix)
+**Date**: February 2026
+**Commits**: 5 | **Files changed**: 5 | **+449 / -6 lines**
+
+## Summary
+
+Adds a `launch_agent` MCP tool that deploys agents with a specific identity defined by an `AGENT.md` file. This enables creating specialized agents (e.g., "backend-expert", "test-writer") whose behavior is governed by a layered system prompt: Base Instructions + Agent Identity + Project Instructions.
+
+## What Changed
+
+### `launch_agent` MCP Tool (`__main__.py`)
+
+```python
+mcp__nano-agent__launch_agent(
+    agentic_prompt="Build the REST API",
+    agent_path="/teams/backend-expert",
+    workspace="/projects/my-api",
+    model="glm-4.7",
+    provider="zai"
+)
+```
+
+- `agent_path`: Directory containing `AGENT.md` (defines WHO the agent is)
+- `workspace`: Working directory. If `workspace/AGENT.md` exists, loaded as project instructions
+- All other parameters same as `prompt_nano_agent`
+
+### Agent Identity Module (`agent_identity.py`)
+
+| Function | Purpose |
+|----------|---------|
+| `read_agent_instructions(agent_path)` | Reads `AGENT.md` from agent directory, validates existence |
+| `build_layered_prompt(base, agent, project)` | Assembles 3-layer system prompt with clear section headers |
+
+Layered prompt structure:
+```
+=== BASE INSTRUCTIONS ===
+{NANO_AGENT_SYSTEM_PROMPT}
+
+=== AGENT INSTRUCTIONS ===
+{contents of agent_path/AGENT.md}
+
+=== PROJECT INSTRUCTIONS ===
+{contents of workspace/AGENT.md, if exists}
+```
+
+### Data Model (`data_types.py`)
+
+`LaunchAgentRequest` — extends `PromptNanoAgentRequest` with `agent_path` field and optional `instructions_override`.
+
+### Cross-Review Hardening
+
+Post-review commit addressed:
+- Empty `AGENT.md` validation (raises `ValueError` for blank files)
+- Platform-specific test skip for macOS symlink behavior
+
+## Test Coverage
+
+| Test File | Tests | Coverage |
+|-----------|-------|----------|
+| `test_agent_identity.py` | 16 | read_agent_instructions, build_layered_prompt, error cases, empty file validation |
+
+All 16 tests passing. Zero regressions.
+
+## Commits
+
+| # | Hash | Message |
+|---|------|---------|
+| 1 | `d175e5f` | feat(US-010): add LaunchAgentRequest model and instructions_override parameter |
+| 2 | `8c7ff47` | feat(US-010): add agent_identity module with read_agent_instructions and build_layered_prompt |
+| 3 | `ea5406a` | feat(US-010): add launch_agent() MCP tool with identity-aware execution |
+| 4 | `9521358` | test(US-010): add comprehensive tests for agent_identity module |
+| 5 | `4eb46d8` | fix(US-010): address cross-review findings — empty AGENT.md validation + platform skip |
+
+## Files Changed
+
+```
+__main__.py          |   6 ++-  (register launch_agent MCP tool)
+agent_identity.py    |  83 +++  (NEW — read/build layered prompts)
+data_types.py        |  31 +++  (LaunchAgentRequest model)
+nano_agent.py        | 138 +++  (launch_agent execution path)
+test_agent_identity.py | 197 +++ (NEW — 16 tests)
+```
+
+---
+
+# Release: Async Concurrency + Portable Hooks
+
+**Branch**: `fix/concurrency-and-portable-hooks`
+**Base**: foundational (includes dashboard, providers, tools)
+**Date**: February 2026
+**Key Commits**: 3 | **Tests**: 20
+
+## Summary
+
+Fixes critical concurrency bugs when multiple nano-agent tasks run simultaneously, and makes hook paths portable across machines. This was the foundational branch that also includes the dashboard, multi-provider support (OpenAI, Anthropic, Ollama, LM Studio, Z.ai), and the initial tool set.
+
+## Concurrency Fix (`08e7df8`)
+
+**Problem**: Multiple concurrent agent executions shared mutable module-level state (`workspace_dir`, agent config). When two agents ran simultaneously, one would overwrite the other's workspace path, causing file operations in the wrong directory.
+
+**Solution**: Replaced module-level variables with `ContextVar` instances:
+- `_workspace_var: ContextVar[str]` — per-task workspace isolation
+- `_agent_config_var: ContextVar[AgentConfig]` — per-task agent configuration
+- `resolve_path()` updated to use `_workspace_var.get()` instead of global
+
+`asyncio.create_task()` and `anyio.start_soon()` both copy `ContextVar` values, so child tasks inherit the correct workspace without cross-contamination.
+
+20 concurrency tests verify isolation under parallel execution.
+
+## Tracing Race Condition Fix (`89f5811`)
+
+Disabled OpenAI Agent SDK tracing globally. The SDK's telemetry system had internal race conditions when multiple agents ran concurrently, causing sporadic crashes unrelated to our code.
+
+## Portable Hooks (`72d718b`)
+
+**Problem**: `.claude/settings.json` hook commands used hardcoded absolute paths (e.g., `/Users/ahmed/ai_storage/...`). These broke on other machines or when the project was moved.
+
+**Solution**: Replace absolute paths with `$CLAUDE_PROJECT_DIR` environment variable, which Claude Code sets automatically to the project root.
+
+90 tests verify path portability across different directory structures.
+
+## Commits
+
+| # | Hash | Message |
+|---|------|---------|
+| 1 | `08e7df8` | fix: async-safe concurrency with ContextVars, resolve_path workspace, and agent configs |
+| 2 | `89f5811` | fix: disable tracing globally to eliminate race condition |
+| 3 | `72d718b` | fix: make hook paths portable using $CLAUDE_PROJECT_DIR |
+
+## Key Files Changed
+
+```
+nano_agent.py        | Workspace ContextVar, agent config isolation
+nano_agent_tools.py  | resolve_path() uses ContextVar
+provider_config.py   | Per-task provider setup
+.claude/settings.json| $CLAUDE_PROJECT_DIR in hook paths
+test_concurrency.py  | 20 concurrency isolation tests
+test_settings_paths.py | 90 path portability tests
+```

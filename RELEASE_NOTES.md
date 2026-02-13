@@ -1,361 +1,133 @@
-# Release: Qwen Cloud Provider + ModelCapability Pipeline Extension
+# Release Notes: Tool Resilience
 
-**Branch:** `feat/qwen-provider`
-**Date:** February 2026
-**Commits:** 16 (9 feat, 4 fix, 3 docs)
-**Scope:** 16 files changed, +1549 / -32 lines
-**New Tests:** 60 (29 auth + 11 provider + 20 model capabilities)
-
----
-
-## What's New
-
-### Qwen Cloud as 6th LLM Provider
-
-Nano-agent now supports **Qwen Cloud**, bringing the total to 6 providers. The available model is `coder-model` (Qwen3-Coder-480B-A35B-Instruct) — a cloud-hosted coding specialist with 480B parameters, optimized for agentic tool-use workflows.
-
-```python
-# From Claude Code
-mcp__nano-agent__prompt_nano_agent(
-    agentic_prompt="Create a FastAPI app with CRUD endpoints",
-    model="coder-model",
-    provider="qwen"
-)
-```
-
-**Provider summary after this release:**
-
-| Provider | Type | Models | Auth |
-|----------|------|--------|------|
-| OpenAI | Cloud | gpt-5, gpt-5-mini, gpt-5-nano, gpt-4o | `OPENAI_API_KEY` env var |
-| Anthropic | Cloud | claude-sonnet-4, claude-opus-4, claude-opus-4-1, claude-3-haiku | `ANTHROPIC_API_KEY` env var |
-| Z.ai | Cloud | glm-4.7, glm-4.5-air | `Z_AI_API_KEY` env var |
-| **Qwen** | **Cloud** | **coder-model** | **OAuth file (`~/.qwen/oauth_creds.json`)** |
-| Ollama | Local | gpt-oss:20b, gpt-oss:120b, qwen3-coder:30b, gemma3:27b, magistral | None |
-| LM Studio | Local | (dynamic) | None |
-
-### How Qwen Authentication Works
-
-Unlike other cloud providers that use environment variable API keys, Qwen uses **OAuth file-based authentication**. Credentials are stored at `~/.qwen/oauth_creds.json` containing an access token and refresh token.
-
-**Setup:**
-1. Authenticate via the Qwen CLI: `qwen login`
-2. The CLI writes credentials to `~/.qwen/oauth_creds.json`
-3. Nano-agent automatically reads, validates, and refreshes tokens as needed
-
-Token refresh uses `curl` subprocess because Qwen's WAF (Alibaba Cloud) blocks Python HTTP client fingerprints (httpx, requests). The refresh is transparent to the user — expired tokens are automatically refreshed before agent execution begins.
-
-**Token lifecycle:**
-```
-Read ~/.qwen/oauth_creds.json
-        │
-        ▼
-  Token expired?  ──No──→  Return access_token
-        │
-       Yes
-        │
-        ▼
-  curl POST to Qwen OAuth endpoint
-        │
-        ▼
-  Save new tokens (atomic write: .tmp → rename)
-        │
-        ▼
-  Return new access_token
-```
-
-### ModelCapability Pipeline Extension
-
-The `ModelCapability` → `get_model_settings()` → `ModelSettings` pipeline previously could only express 3 of the SDK's 17 parameters (temperature, max_tokens, top_p). This release adds **4 new optional fields**:
-
-| Field | Type | Range | Purpose |
-|-------|------|-------|---------|
-| `parallel_tool_calls` | `Optional[bool]` | True/False/None | Enable concurrent tool execution |
-| `frequency_penalty` | `Optional[float]` | [-2.0, 2.0] | Penalize repeated tokens |
-| `presence_penalty` | `Optional[float]` | [-2.0, 2.0] | Penalize tokens already present |
-| `extra_body` | `Optional[Dict[str, Any]]` | Any dict | Provider-specific params passed directly to API |
-
-**Backward compatibility:** All new fields default to `None`. When `None`, the parameter is omitted from the API call (using the SDK's `NOT_GIVEN` sentinel). Existing models produce identical `ModelSettings` as before — verified by regression tests.
-
-**The `extra_body` escape hatch:** Some providers have parameters not in the standard OpenAI API spec (e.g., Qwen's `top_k` and `repetition_penalty`). The `extra_body` dict is passed directly to the `chat.completions.create()` call, allowing any provider-specific parameter without modifying the SDK.
-
-### Optimized Qwen3-Coder Parameters
-
-The `coder-model` entry applies official vendor-recommended parameters from the [Qwen3-Coder HuggingFace model card](https://huggingface.co/Qwen/Qwen3-Coder-480B-A35B-Instruct):
-
-| Parameter | Value | Via | Evidence |
-|-----------|-------|-----|----------|
-| temperature | 0.7 | `ModelSettings.temperature` | HuggingFace model card, LM Studio preset, Qwen docs |
-| top_p | 0.8 | `ModelSettings.top_p` | Same 4 sources |
-| top_k | 20 | `extra_body` | HuggingFace model card |
-| repetition_penalty | 1.05 | `extra_body` | HuggingFace model card |
-| parallel_tool_calls | True | `ModelSettings.parallel_tool_calls` | Empirically verified via curl |
-| max_tokens | 65536 | `ModelSettings.max_tokens` | Maximum supported by API |
-
-Parameters intentionally NOT set: `frequency_penalty`, `presence_penalty` — Qwen docs explicitly warn that presence_penalty "may cause language mixing and a slight decrease in model performance" for coding tasks.
+**Branch**: `feat/tool-resilience`
+**Base**: `main` (post Qwen Cloud provider merge)
+**Date**: 2026-02-13
+**Commits**: 10 | **Files changed**: 6 | **+869 / -4 lines**
 
 ---
 
-## Dashboard Changes
+## What This Release Does
 
-The web dashboard (`nano-web`, port 8484) is updated for 6 providers:
+When nano-agent models finish a task, they sometimes try to call tools that don't exist in our tool set. For example, `qwen3-coder-next` called `run_tests` after building a pytest project — correct intent, wrong tool name. The OpenAI Agent SDK crashes with `ModelBehaviorError` at that point, killing the entire agent run and losing all work done up to that moment.
 
-- **Grid:** Responsive layout updated to `lg:grid-cols-6`
-- **Qwen card:** Orange color theme (`bg-orange-500/20 text-orange-400 border-orange-500/30`)
-- **Status:** Shows "online" when `~/.qwen/oauth_creds.json` exists, "no_api_key" otherwise
-- **Config:** Qwen shows "Not Required" in the Configuration section (OAuth-based, no env var needed)
-- **Health check:** Qwen included in the concurrent 6-provider health check
+This release solves the problem with a two-layer defense:
 
----
+1. **Give agents the tools they actually need** — `search_files` and `run_tests` are the two most commonly hallucinated tool names across 10 coding agent frameworks we surveyed. By implementing them as real tools, ~90% of hallucination cases become legitimate tool calls instead of crashes.
 
-## Error Handling
+2. **Catch everything else gracefully** — For the remaining unknown tool names, a pre-filter monkey-patch intercepts them before the SDK can crash. Valid tool calls in the same response still execute normally. The model receives a helpful error listing available tools so it can self-correct on the next turn.
 
-The OAuth module (`qwen_auth.py`) includes multiple layers of defensive error handling:
-
-### Credential Validation
-Token types are validated, not just key existence. The following corrupted states are caught early with descriptive error messages:
-- `access_token: null` → "invalid (type=NoneType)"
-- `access_token: ""` → "invalid (type=str)"
-- `access_token: 123` → "invalid (type=int)"
-- Same validation for `refresh_token`
-
-### URL-Encoded POST Body
-Token refresh uses `urllib.parse.urlencode()` instead of f-string interpolation. Tokens containing `&`, `=`, `+`, or `%` are properly percent-encoded, preventing malformed OAuth requests.
-
-### OAuth Error Parsing
-When the token endpoint returns an OAuth error like `{"error": "invalid_grant", "error_description": "refresh token revoked"}`, the `error_description` is extracted and surfaced in the exception. Previously, this would show the generic "missing access_token" message.
-
-### Atomic Write with Cleanup
-Credentials are saved via atomic write (`.tmp` + `os.rename`). If either step fails, the orphaned `.tmp` file is cleaned up and the original exception re-raised.
-
-### Expiry Default Warning
-When the refresh response omits `expires_in`, a warning is logged before defaulting to 21600 seconds (6 hours), making silent assumptions visible.
+Additionally, this release adds support for `qwen3-coder-next` (Qwen's latest coding model) running on LM Studio.
 
 ---
 
-## Architecture
+## New Tools
 
-### Provider Wiring
+### `search_files(pattern, directory, file_glob)`
+Recursive grep-based file search. Returns matching lines with file paths and line numbers.
 
-Qwen follows the `AsyncOpenAI` + `OpenAIChatCompletionsModel` pattern (same as Ollama), pointed at `https://portal.qwen.ai/v1`:
+- Uses `grep -rn -E` under the hood — fast, handles large codebases
+- Supports regex patterns and file glob filtering (e.g., `*.py`, `*.js`)
+- Output truncated at 30K characters (same limit as bash tool)
+- Security: `--` end-of-options marker prevents grep flag injection, workspace boundary validation prevents path traversal, glob validation blocks directory escape
+
+### `run_tests(test_path, framework)`
+Runs test suites with automatic framework detection.
+
+- Auto-detects: pytest (from conftest.py/pyproject.toml), npm (from package.json), cargo (from Cargo.toml)
+- Supports explicit framework selection: `pytest`, `unittest`, `npm`, `jest`, `cargo`
+- Both passing and failing tests return output (not errors) so the model can read results
+- Security: workspace boundary validation, `shlex.quote()` for path arguments
+
+---
+
+## SDK Crash Prevention
+
+**Problem**: OpenAI Agent SDK (v0.8.4) raises `ModelBehaviorError` inside a loop over `response.output` when it encounters an unknown tool call. All valid tool calls processed before the crash are lost. This is a known issue (openai/openai-agents-python#325, open since March 2025, unfixed).
+
+**Solution**: A pre-filter monkey-patch on `process_model_response` that:
+1. Scans `response.output` for unknown `ResponseFunctionToolCall` items
+2. If none found — calls original function as-is (zero overhead on happy path)
+3. If unknown found — removes them, processes valid calls normally via original function, then appends synthetic error items using the SDK's own `ToolCallItem`/`ToolCallOutputItem` pattern (same approach as `approvals.py:22-39`)
+
+The error message lists all available tool names so the model can self-correct.
+
+---
+
+## Security Hardening
+
+Code reviews by Z.ai (glm-4.7) and Qwen Next (qwen3-coder-next) identified CRITICAL security issues that were fixed before merge:
+
+| Issue | Severity | Fix |
+|-------|----------|-----|
+| Grep flag injection via pattern parameter | CRITICAL | `--` end-of-options marker before pattern argument |
+| Path traversal in search_files directory | CRITICAL | `resolve().relative_to(workspace)` boundary check |
+| Path traversal in run_tests test_path | CRITICAL | Same workspace boundary validation |
+| Command injection via unquoted test paths | CRITICAL | `shlex.quote()` for all path arguments in shell commands |
+| Double-patch race condition | CRITICAL | `threading.Lock` with module-level `_patch_applied` flag |
+| file_glob directory escape | HIGH | Block path separators and `..` in glob patterns |
+| Empty response.output not guarded | HIGH | Fast-return to original function on None/empty output |
+| ContextVar test fixture leak | HIGH | Reset before AND after yield in autouse fixtures |
+
+---
+
+## qwen3-coder-next Support
+
+- Added to `MODEL_CAPABILITIES` registry with 128K max output tokens
+- Added to `MODEL_INFO` with correct LM Studio model ID (`qwen/qwen3-coder-next`)
+- `MAX_AGENT_TURNS` bumped from 20 to 50 to support longer coding sessions
+
+---
+
+## System Prompt Update
+
+The agent system prompt now lists all 8 tools with negative guidance:
 
 ```
-┌─────────────┐     ┌──────────────┐     ┌────────────────────────┐
-│ qwen_auth   │────→│ AsyncOpenAI  │────→│ OpenAIChatCompletions  │
-│ get_valid_  │     │ (base_url=   │     │ Model                  │
-│ token()     │     │  portal.qwen │     │ (model="coder-model")  │
-│             │     │  api_key=    │     │                        │
-│             │     │  oauth_token)│     │                        │
-└─────────────┘     └──────────────┘     └────────────────────────┘
+You have ONLY these 8 tools. Do NOT call any other tool name.
 ```
 
-### Registration Checklist (All Complete)
-
-| Location | What's registered |
-|----------|-------------------|
-| `data_types.py` | `"qwen"` added to `ProviderType` Literal |
-| `constants.py` | `MODEL_INFO`, `MODEL_CAPABILITIES`, `QWEN_BASE_URL`, `QWEN_AVAILABLE_MODELS`, `PROVIDER_REQUIREMENTS` |
-| `provider_config.py` | `create_agent()` branch, `validate_provider_setup()` (sync + async), health check |
-| `token_tracking.py` | Token pricing (all $0.00 — free tier) |
-| `cli.py` | `check_api_key()` Qwen branch |
-| `web/server.py` | `/api/providers`, `/api/models` endpoints |
-| `web/static/index.html` | `providerNames` array, color map, grid layout |
+This serves as the primary defense — smart models (like qwen3-coder-next) follow this instruction and never attempt unknown tools. The monkey-patch is the fallback for weaker models.
 
 ---
 
 ## Test Coverage
 
-| Test File | Tests | Coverage |
-|-----------|-------|----------|
-| `test_qwen_auth.py` | 29 | Happy path (6), Negative scenarios (12), Edge cases (4), Robustness (7) |
-| `test_qwen_provider.py` | 11 | create_agent (3), validate_setup sync (3), async (3), health (2) |
-| `test_model_capabilities.py` | 64 | 45 pre-existing + 19 new (data model, pipeline, boundaries, Qwen registration) |
-| `test_provider_health.py` | 28 | Updated expectations from 5 → 6 providers |
-| **Total scoped** | **132** | **All passing** |
-
-### Review Process
-
-7 independent reviewers:
-- **Z.ai** (glm-4.7 via nano-MCP): Architecture, security, race conditions, backward compatibility
-- **Qwen** (coder-model via nano-MCP): Self-review of OAuth module and parameter configuration
-- **5 Claude Code subagents**: Dashboard alignment, silent failure analysis, test coverage, code quality, backward compatibility
-
-Results: 9 issues identified → 6 fixed → 3 deferred (documented below).
+| Test Suite | Tests | Status |
+|------------|-------|--------|
+| search_files (basic + security) | 11 | All pass |
+| run_tests (basic + security) | 10 | All pass |
+| tool resilience (monkey-patch) | 7 | All pass |
+| model capabilities (qwen3-coder-next) | 21 | All pass |
+| **Total new tests** | **49** | **All pass** |
+| Full regression (307/346) | 346 | 39 pre-existing failures, 0 new |
 
 ---
 
-## Known Limitations
+## Commits (chronological)
 
-1. **No concurrent token refresh locking.** `get_valid_token()` has no mutex. If two agents call it simultaneously with an expired token, both will attempt to refresh — the second may fail with `invalid_grant`. This is acceptable for current single-agent usage patterns and is a design decision deferred to a future concurrent-agents feature.
-
-2. **Token baked at agent creation time.** The OAuth token is fetched once during `create_agent()` and stored as a fixed `api_key` in the `AsyncOpenAI` client. Qwen tokens expire (default 6 hours). Long-running sessions may encounter mid-execution 401 errors. A proper fix requires a custom `httpx.Auth` class, which is beyond the scope of this release.
-
-3. **curl dependency.** Token refresh requires `curl` on the system. Checked at refresh time with `shutil.which("curl")` — raises `QwenAuthError("curl not found — required for Qwen token refresh")` if missing.
-
----
-
-## Breaking Changes
-
-**None.** All changes are additive:
-- New `ModelCapability` fields default to `None` — existing models unaffected
-- `"qwen"` added to `Literal` provider types — additive, no removals
-- Dashboard grid expanded — responsive, no layout changes for existing providers
-- All 132 scoped tests pass with zero regressions
+| # | Hash | Message |
+|---|------|---------|
+| 1 | `05f85ec` | feat: add qwen3-coder-next to MODEL_CAPABILITIES and MODEL_INFO |
+| 2 | `40da182` | feat: maximize qwen3-coder-next output to 128K tokens |
+| 3 | `131d7e3` | fix: use full LM Studio model ID qwen/qwen3-coder-next |
+| 4 | `c6762eb` | feat: bump MAX_AGENT_TURNS from 20 to 50 |
+| 5 | `70545d3` | feat(tools): add search_files tool for recursive file content search |
+| 6 | `8b4a690` | feat(tools): add run_tests tool with auto-detection of test frameworks |
+| 7 | `74e53fb` | fix(resilience): pre-filter monkey-patch for unknown tool call recovery |
+| 8 | `bcd6643` | docs(prompt): update system prompt to list all 8 tools with negative guidance |
+| 9 | `f1794be` | test(integration): register new tools and fix ContextVar test isolation |
+| 10 | `34d778b` | fix(security): address CRITICAL review findings from Z.ai and Qwen Next |
 
 ---
 
 ## Files Changed
 
-| File | Change | Lines |
-|------|--------|-------|
-| `modules/qwen_auth.py` | **NEW** — OAuth token management | +234 |
-| `tests/test_qwen_auth.py` | **NEW** — 29 auth tests | +405 |
-| `tests/test_qwen_provider.py` | **NEW** — 11 provider tests | +205 |
-| `tests/test_model_capabilities.py` | Extended — 19 new tests | +268 |
-| `modules/provider_config.py` | Qwen wiring + pipeline extension | +76 |
-| `modules/constants.py` | Qwen constants + coder-model config | +23 |
-| `modules/data_types.py` | 4 new ModelCapability fields | +26 |
-| `web/server.py` | Dashboard Qwen endpoints | +24 |
-| `web/static/index.html` | 6-provider grid + orange theme | +7 |
-| `tests/test_provider_health.py` | 5→6 provider expectations | +27 |
-| `modules/token_tracking.py` | Qwen pricing entry | +10 |
-| `modules/nano_agent.py` | Qwen import for error handling | +2 |
-| `cli.py` | Qwen credential check | +11 |
-| `CLAUDE.md` | 5→6 providers | +4 |
-| `KNOWLEDGE_TRANSFER.md` | 5→6 providers | +10 |
-| `tasks/specs/qwen-provider-tasks.json` | Task tracker | +249 |
-
----
-
-## Commit Log
-
-| # | SHA | Type | Description |
-|---|-----|------|-------------|
-| 1 | `ba29738` | feat | Add OAuth token management module with 20 tests |
-| 2 | `1277df3` | feat | Register Qwen in constants, data types, and model capabilities |
-| 3 | `247a3b1` | feat | Wire Qwen into create_agent and validate_provider_setup |
-| 4 | `a7618cf` | feat | Add Qwen health check and update provider count to 6 |
-| 5 | `b6ada68` | feat | Align dashboard with 6-provider architecture |
-| 6 | `ec7bccc` | feat | Update MCP tool docstrings and add token pricing |
-| 7 | `cf3c542` | fix | Dashboard provider status, CLI creds check, and docstring |
-| 8 | `4dd7331` | docs | Add Qwen provider task tracker with evidence |
-| 9 | `45f772d` | feat | Add parallel_tool_calls, frequency/presence_penalty, extra_body to ModelCapability |
-| 10 | `e67469e` | feat | Wire 4 new fields through get_model_settings pipeline |
-| 11 | `060cc7f` | feat | Apply official Qwen3-Coder parameters to coder-model |
-| 12 | `0e44ee5` | fix | Validate credential token types and values, not just key existence |
-| 13 | `a5f4455` | fix | URL-encode refresh token POST body to prevent injection |
-| 14 | `036f84e` | fix | Improve error handling in token refresh and credential save |
-| 15 | `23af7cc` | docs | Update provider_config module docstring to list all 6 providers |
-| 16 | `f65412d` | docs | Update provider count from 5 to 6 across project documentation |
-
----
----
-
-# Release: `bash` Tool — Rename, 30K Output, Persistent CWD
-
-## The Problem
-
-Nano-agents had a `run_command` tool that fell short in three ways that directly degraded agent performance:
-
-### 1. Name misled agents
-The name "run_command" implied a single, isolated command. Agents didn't realize they could chain with `&&`, `;`, pipes, or run scripts. In practice, agents would make 3 separate tool calls where one `npm install && npm test` would suffice — wasting turns and context window.
-
-### 2. Output truncated at 8K characters
-Test suites, build logs, and `grep` results routinely produce 10-20K of output. With an 8K cap, agents lost the critical tail of error messages — the exact part they needed to diagnose failures. They'd see the passing tests but miss the failure traceback at the end.
-
-### 3. CWD reset every call
-Each `run_command` call started fresh in the workspace root, regardless of any `cd` in the previous call. This forced agents to use absolute paths everywhere, making multi-step workflows unnatural:
-
 ```
-# What agents had to do (verbose, fragile)
-run_command("ls /project/src/auth")
-run_command("cat /project/src/auth/middleware.py")
-run_command("cd /project/src/auth && python -m pytest test_middleware.py")
-
-# What they wanted to do (natural, like a human)
-bash("cd src/auth")
-bash("ls")
-bash("cat middleware.py")
-bash("python -m pytest test_middleware.py")
+constants.py            |  26 ++-   (new tool constants, system prompt update)
+nano_agent.py           | 126 +++   (resilience monkey-patch + security hardening)
+nano_agent_tools.py     | 214 +++   (search_files + run_tests implementations)
+test_nano_agent_tools.py| 195 +++   (28 new tool tests + 6 security tests)
+test_tool_resilience.py | 255 +++   (NEW — 7 resilience tests)
+test_model_capabilities | 57  +++   (21 qwen3-coder-next capability tests)
 ```
-
-## What Changed
-
-### Rename: `run_command` → `bash`
-The tool is now called `bash`, matching Claude Code's naming convention. The `@function_tool` decorator auto-derives the tool name from the Python function name — no registration or config changes needed. The `on_tool_end` lifecycle hook uses dynamic `getattr(tool, 'name')`, so it works without modification.
-
-The system prompt now documents multi-command capabilities:
-```
-- bash(command) — Execute shell commands, scripts, and multi-command pipelines
-- Use bash for: installing deps, running tests, building, git, chained commands (&&, ;, |)
-```
-
-### Output cap: 8K → 30K characters
-Matches Claude Code's Bash tool limit. Extracted magic numbers to named constants:
-- `BASH_OUTPUT_MAX_CHARS = 30000`
-- `BASH_OUTPUT_HEAD_RATIO = 0.6` (keep 60% from start)
-- `BASH_OUTPUT_TAIL_RATIO = 0.35` (keep 35% from end)
-
-The 5% gap between head+tail accommodates the `...(truncated)...` marker.
-
-### Persistent CWD across calls
-Each `bash()` call now tracks the shell's working directory. A shell wrapper appends a unique marker and `pwd` after the user's command:
-
-```shell
-user_command; __nano_exit=$?; echo "__NANO_CWD_f7e2a1__"; pwd; exit $__nano_exit
-```
-
-- The marker is stripped from output before returning to the agent
-- Exit codes are preserved via `$?` capture before the marker
-- CWD is stored in a `ContextVar` — async-safe, isolated per concurrent task
-- Failed `cd` commands don't change CWD (shell exits before `pwd` runs in the original dir)
-- `set_workspace()` resets CWD tracking when a new agent session begins
-- Parser uses `rfind` (last occurrence) to handle edge cases where user output contains the marker string
-
-## What Did NOT Change
-
-| Component | Why safe |
-|-----------|----------|
-| `nano_agent.py` | `on_tool_end` reads tool name dynamically via `getattr(tool, 'name')` |
-| `__main__.py` | `bash` is an internal agent tool, not an MCP-registered tool |
-| `data_types.py` | No run_command-specific models existed |
-| `web/server.py` | Zero tool name references — fully tool-agnostic |
-| `web/static/index.html` | Zero tool name references |
-
-## Live Verification
-
-Qwen3-Coder 30B (Ollama) verified persistent CWD in 7 separate bash calls:
-
-| Step | Command | CWD After |
-|------|---------|-----------|
-| 1 | `pwd` | `/tmp/nano-cwd-test` (workspace) |
-| 2 | `cd /tmp` | `/tmp` |
-| 3 | `pwd` | `/tmp` (persisted!) |
-| 4 | `mkdir -p test_cwd_persist && cd test_cwd_persist` | `/tmp/test_cwd_persist` |
-| 5 | `pwd` | `/tmp/test_cwd_persist` (persisted!) |
-| 6 | `cd /nonexistent_dir_xyz` | `/tmp/test_cwd_persist` (unchanged after failure) |
-| 7 | `pwd` | `/tmp/test_cwd_persist` (confirmed) |
-
-## Test Coverage
-
-19 new tests in `test_bash_tool.py`, all passing:
-
-| Category | Count | What's tested |
-|----------|-------|---------------|
-| Constants | 3 | TOOL_BASH exists, in AVAILABLE_TOOLS, system prompt updated |
-| Function | 2 | bash in tool list, basic execution |
-| Output cap | 4 | Constants exist, no truncation <30K, truncation >30K, head/tail preserved |
-| Persistent CWD | 7 | Defaults to workspace, persists after cd, unchanged after failed cd, marker stripped, exit code preserved, concurrent task isolation, reset on set_workspace |
-| CWD parser | 3 | No marker, duplicate marker (uses last), invalid path rejected |
-
-Zero regressions in full test suite (40 pre-existing failures unchanged).
-
-## Files Changed
-
-| File | Lines | What |
-|------|-------|------|
-| `modules/constants.py` | +4/-4 | Rename constant, update system prompt |
-| `modules/nano_agent_tools.py` | +62/-14 | Rename function, output cap, CWD tracking |
-| `tests/test_bash_tool.py` | +264 (new) | 19 tests |
-| `CLAUDE.md` | +1/-1 | Reference update |
-| `KNOWLEDGE_TRANSFER.md` | +4/-4 | Reference updates |

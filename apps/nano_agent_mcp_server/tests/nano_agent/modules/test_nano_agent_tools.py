@@ -543,3 +543,51 @@ class TestRunTests:
         # Verify output assembly
         assert "Tests: 5 passed" in result
         assert "[exit_code: 0]" in result
+
+    @pytest.mark.asyncio
+    async def test_run_tests_timeout_kills_process(self, tmp_path):
+        """Verify timeout: process killed, cleanup communicate called, error returned."""
+        set_workspace(str(tmp_path))
+
+        # Mock subprocess with communicate() that hangs forever
+        mock_proc = MagicMock()
+        communicate_calls = 0
+        first_call_cancelled = False
+
+        async def fake_communicate():
+            nonlocal communicate_calls, first_call_cancelled
+            communicate_calls += 1
+            if communicate_calls == 1:
+                try:
+                    # First call: wrapped by wait_for, will be cancelled on timeout
+                    await asyncio.sleep(999)
+                    return (b"", b"")  # Never reached
+                except asyncio.CancelledError:
+                    first_call_cancelled = True
+                    raise  # Re-raise so wait_for converts to TimeoutError
+            # Second call: post-kill cleanup (line 900), returns immediately
+            return (b"", b"")
+
+        mock_proc.communicate = fake_communicate
+        mock_proc.kill = MagicMock()
+        mock_proc.returncode = -9
+
+        test_timeout = 0.01
+        with patch(
+            "asyncio.create_subprocess_shell",
+            AsyncMock(return_value=mock_proc),
+        ), patch(
+            "nano_agent.modules.nano_agent_tools.COMMAND_TIMEOUT_SECONDS",
+            test_timeout,
+        ):
+            result = await _raw_run_tests(".", "pytest")
+
+        # First communicate() was properly cancelled by wait_for
+        assert first_call_cancelled, "First communicate() should have been cancelled"
+        # Process was killed on timeout
+        mock_proc.kill.assert_called_once()
+        # Cleanup communicate() was called after kill (line 900)
+        assert communicate_calls == 2, f"Expected 2 communicate() calls, got {communicate_calls}"
+        # Error message returned with correct timeout value
+        assert "Error" in result
+        assert f"timed out after {test_timeout}s" in result

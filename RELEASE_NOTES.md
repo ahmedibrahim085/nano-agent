@@ -1,133 +1,120 @@
-# Release Notes: Tool Resilience
+# Release Notes: GLM-5 Model Support
 
-**Branch**: `feat/tool-resilience`
-**Base**: `main` (post Qwen Cloud provider merge)
+**Branch**: `feat/glm5-model`
+**Base**: `main` (post tool-resilience merge)
 **Date**: 2026-02-13
-**Commits**: 10 | **Files changed**: 6 | **+869 / -4 lines**
+**Commits**: 2 | **Files changed**: 2 | **+61 / -1 lines**
 
 ---
 
-## What This Release Does
+## Summary
 
-When nano-agent models finish a task, they sometimes try to call tools that don't exist in our tool set. For example, `qwen3-coder-next` called `run_tests` after building a pytest project — correct intent, wrong tool name. The OpenAI Agent SDK crashes with `ModelBehaviorError` at that point, killing the entire agent run and losing all work done up to that moment.
+Adds GLM-5 (744B MoE, 44B active) as a Z.ai provider model alongside existing GLM-4.7 and GLM-4.5-air. GLM-5 is Z.ai's frontier reasoning model with native chain-of-thought thinking support enabled by default.
 
-This release solves the problem with a two-layer defense:
-
-1. **Give agents the tools they actually need** — `search_files` and `run_tests` are the two most commonly hallucinated tool names across 10 coding agent frameworks we surveyed. By implementing them as real tools, ~90% of hallucination cases become legitimate tool calls instead of crashes.
-
-2. **Catch everything else gracefully** — For the remaining unknown tool names, a pre-filter monkey-patch intercepts them before the SDK can crash. Valid tool calls in the same response still execute normally. The model receives a helpful error listing available tools so it can self-correct on the next turn.
-
-Additionally, this release adds support for `qwen3-coder-next` (Qwen's latest coding model) running on LM Studio.
+No architecture changes — GLM-5 uses the same `LitellmModel` bridge and Coding Plan endpoint (`/api/anthropic`) as GLM-4.7.
 
 ---
 
-## New Tools
+## What Changed
 
-### `search_files(pattern, directory, file_glob)`
-Recursive grep-based file search. Returns matching lines with file paths and line numbers.
+### Production Code (`constants.py`)
 
-- Uses `grep -rn -E` under the hood — fast, handles large codebases
-- Supports regex patterns and file glob filtering (e.g., `*.py`, `*.js`)
-- Output truncated at 30K characters (same limit as bash tool)
-- Security: `--` end-of-options marker prevents grep flag injection, workspace boundary validation prevents path traversal, glob validation blocks directory escape
+| Registry | Change |
+|----------|--------|
+| `MODEL_INFO` | Added `"glm-5": "GLM-5 - Z.ai frontier reasoning model (744B MoE)"` |
+| `ZAI_AVAILABLE_MODELS` | Added `"glm-5"` (now `["glm-5", "glm-4.7", "glm-4.5-air"]`) |
+| `MODEL_CAPABILITIES` | Added full capability entry with thinking enabled |
 
-### `run_tests(test_path, framework)`
-Runs test suites with automatic framework detection.
-
-- Auto-detects: pytest (from conftest.py/pyproject.toml), npm (from package.json), cargo (from Cargo.toml)
-- Supports explicit framework selection: `pytest`, `unittest`, `npm`, `jest`, `cargo`
-- Both passing and failing tests return output (not errors) so the model can read results
-- Security: workspace boundary validation, `shlex.quote()` for path arguments
-
----
-
-## SDK Crash Prevention
-
-**Problem**: OpenAI Agent SDK (v0.8.4) raises `ModelBehaviorError` inside a loop over `response.output` when it encounters an unknown tool call. All valid tool calls processed before the crash are lost. This is a known issue (openai/openai-agents-python#325, open since March 2025, unfixed).
-
-**Solution**: A pre-filter monkey-patch on `process_model_response` that:
-1. Scans `response.output` for unknown `ResponseFunctionToolCall` items
-2. If none found — calls original function as-is (zero overhead on happy path)
-3. If unknown found — removes them, processes valid calls normally via original function, then appends synthetic error items using the SDK's own `ToolCallItem`/`ToolCallOutputItem` pattern (same approach as `approvals.py:22-39`)
-
-The error message lists all available tool names so the model can self-correct.
-
----
-
-## Security Hardening
-
-Code reviews by Z.ai (glm-4.7) and Qwen Next (qwen3-coder-next) identified CRITICAL security issues that were fixed before merge:
-
-| Issue | Severity | Fix |
-|-------|----------|-----|
-| Grep flag injection via pattern parameter | CRITICAL | `--` end-of-options marker before pattern argument |
-| Path traversal in search_files directory | CRITICAL | `resolve().relative_to(workspace)` boundary check |
-| Path traversal in run_tests test_path | CRITICAL | Same workspace boundary validation |
-| Command injection via unquoted test paths | CRITICAL | `shlex.quote()` for all path arguments in shell commands |
-| Double-patch race condition | CRITICAL | `threading.Lock` with module-level `_patch_applied` flag |
-| file_glob directory escape | HIGH | Block path separators and `..` in glob patterns |
-| Empty response.output not guarded | HIGH | Fast-return to original function on None/empty output |
-| ContextVar test fixture leak | HIGH | Reset before AND after yield in autouse fixtures |
-
----
-
-## qwen3-coder-next Support
-
-- Added to `MODEL_CAPABILITIES` registry with 128K max output tokens
-- Added to `MODEL_INFO` with correct LM Studio model ID (`qwen/qwen3-coder-next`)
-- `MAX_AGENT_TURNS` bumped from 20 to 50 to support longer coding sessions
-
----
-
-## System Prompt Update
-
-The agent system prompt now lists all 8 tools with negative guidance:
-
-```
-You have ONLY these 8 tools. Do NOT call any other tool name.
+**GLM-5 ModelCapability**:
+```python
+"glm-5": ModelCapability(
+    temperature=1.0,
+    max_tokens=131072,      # 131K output (200K context window)
+    top_p=0.95,
+    extra_body={
+        "thinking": {"type": "enabled"},
+        "allowed_openai_params": ["thinking"],
+    },
+)
 ```
 
-This serves as the primary defense — smart models (like qwen3-coder-next) follow this instruction and never attempt unknown tools. The monkey-patch is the fallback for weaker models.
+### LiteLLM Thinking Passthrough
+
+GLM-5's `thinking` parameter enables chain-of-thought reasoning — the capability that drives its SOTA benchmark performance. However, LiteLLM's Anthropic provider blocks unknown parameters by default, raising `UnsupportedParamsError`.
+
+**Solution**: Pass `allowed_openai_params=["thinking"]` alongside `thinking` in `extra_body`. The flow:
+
+1. `ModelCapability.extra_body` → `ModelSettings.extra_body`
+2. Agent SDK unpacks `extra_body` into `**kwargs` for `litellm.acompletion()`
+3. `thinking` matches the named parameter in `acompletion()` signature
+4. `allowed_openai_params` flows into `**kwargs` → extends LiteLLM's supported params list
+5. LiteLLM properly handles `thinking` via its Anthropic transformation layer
+
+This approach is non-invasive — no changes to `provider_config.py` or global LiteLLM settings.
 
 ---
 
-## Test Coverage
+## Tests (`test_model_capabilities.py`)
 
-| Test Suite | Tests | Status |
-|------------|-------|--------|
-| search_files (basic + security) | 11 | All pass |
-| run_tests (basic + security) | 10 | All pass |
-| tool resilience (monkey-patch) | 7 | All pass |
-| model capabilities (qwen3-coder-next) | 21 | All pass |
-| **Total new tests** | **49** | **All pass** |
-| Full regression (307/346) | 346 | 39 pre-existing failures, 0 new |
+6 new tests across 4 test classes:
+
+| Test | Class | Verifies |
+|------|-------|----------|
+| `test_glm5_has_full_output_capacity` | TestRegistryContents | max_tokens == 131072 |
+| `test_glm5_thinking_enabled` | TestRegistryContents | extra_body has thinking + allowed_openai_params |
+| `test_validate_tool_support_glm5_supported` | TestToolSupportValidation | GLM-5 passes tool support check |
+| `test_get_model_settings_glm5` | TestGetModelSettings | ModelSettings has correct temp/tokens/top_p |
+| `test_glm5_full_pipeline` | TestIntegrationPipeline | End-to-end: validation → ModelSettings with thinking in extra_body |
+
+Total model capability tests: **75** (was 69).
 
 ---
 
-## Commits (chronological)
+## Empirical Verification
+
+All verified via live Z.ai Coding Plan (Max plan) API calls:
+
+| Test | Result |
+|------|--------|
+| Basic GLM-5 call via nano-agent MCP | PASS |
+| GLM-5 tool calling (list_directory) | PASS |
+| GLM-5 thinking blocks returned via LiteLLM | PASS (213 reasoning tokens) |
+| GLM-5 thinking + tool calling combined | PASS |
+| GLM-5 multi-phase complex task (all 8 agent tools) | PASS (26/26 subtests, 117K tokens, ~5 min) |
+| Direct curl to `/api/anthropic` with thinking param | PASS (HTTP 200) |
+| `litellm.acompletion()` with thinking + allowed_openai_params | PASS |
+
+---
+
+## Commits
 
 | # | Hash | Message |
 |---|------|---------|
-| 1 | `05f85ec` | feat: add qwen3-coder-next to MODEL_CAPABILITIES and MODEL_INFO |
-| 2 | `40da182` | feat: maximize qwen3-coder-next output to 128K tokens |
-| 3 | `131d7e3` | fix: use full LM Studio model ID qwen/qwen3-coder-next |
-| 4 | `c6762eb` | feat: bump MAX_AGENT_TURNS from 20 to 50 |
-| 5 | `70545d3` | feat(tools): add search_files tool for recursive file content search |
-| 6 | `8b4a690` | feat(tools): add run_tests tool with auto-detection of test frameworks |
-| 7 | `74e53fb` | fix(resilience): pre-filter monkey-patch for unknown tool call recovery |
-| 8 | `bcd6643` | docs(prompt): update system prompt to list all 8 tools with negative guidance |
-| 9 | `f1794be` | test(integration): register new tools and fix ContextVar test isolation |
-| 10 | `34d778b` | fix(security): address CRITICAL review findings from Z.ai and Qwen Next |
+| 1 | `75e41cb` | feat(zai): add GLM-5 model support alongside GLM-4.7 |
+| 2 | `95d8623` | feat(zai): enable GLM-5 thinking (chain-of-thought reasoning) |
 
 ---
 
 ## Files Changed
 
 ```
-constants.py            |  26 ++-   (new tool constants, system prompt update)
-nano_agent.py           | 126 +++   (resilience monkey-patch + security hardening)
-nano_agent_tools.py     | 214 +++   (search_files + run_tests implementations)
-test_nano_agent_tools.py| 195 +++   (28 new tool tests + 6 security tests)
-test_tool_resilience.py | 255 +++   (NEW — 7 resilience tests)
-test_model_capabilities | 57  +++   (21 qwen3-coder-next capability tests)
+constants.py              | 12 +++++++++++-  (1 modified, 11 added)
+test_model_capabilities.py | 50 ++++++++++++++++++++++  (50 added)
 ```
+
+---
+
+## Usage
+
+```python
+mcp__nano-agent__prompt_nano_agent(
+    agentic_prompt="Your task here",
+    model="glm-5",
+    provider="zai"
+)
+```
+
+## Requirements
+
+- Z.ai Max plan (or Pro plan with GLM-5 access)
+- `Z_AI_API_KEY` environment variable set

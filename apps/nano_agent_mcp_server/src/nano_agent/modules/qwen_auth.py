@@ -51,8 +51,19 @@ def read_qwen_credentials(creds_path: Path = QWEN_CREDS_PATH) -> dict:
 
     if "access_token" not in creds:
         raise QwenAuthError("Qwen credentials missing access_token")
+    if not isinstance(creds["access_token"], str) or not creds["access_token"].strip():
+        raise QwenAuthError(
+            f"Qwen credentials access_token is invalid "
+            f"(type={type(creds['access_token']).__name__})"
+        )
+
     if "refresh_token" not in creds:
         raise QwenAuthError("Qwen credentials missing refresh_token")
+    if not isinstance(creds["refresh_token"], str) or not creds["refresh_token"].strip():
+        raise QwenAuthError(
+            f"Qwen credentials refresh_token is invalid "
+            f"(type={type(creds['refresh_token']).__name__})"
+        )
 
     logger.debug("Read Qwen credentials from %s", creds_path)
     return creds

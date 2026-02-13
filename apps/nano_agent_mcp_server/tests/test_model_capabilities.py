@@ -105,6 +105,12 @@ class TestRegistryContents:
 
         assert MODEL_CAPABILITIES["glm-4.7"].max_tokens == 131072
 
+    def test_glm5_has_full_output_capacity(self):
+        """GLM-5 gets its full 131K output capacity."""
+        from nano_agent.modules.constants import MODEL_CAPABILITIES
+
+        assert MODEL_CAPABILITIES["glm-5"].max_tokens == 131072
+
     def test_gemma3_no_tool_support(self):
         """Gemma3:27b is marked as not supporting tools."""
         from nano_agent.modules.constants import MODEL_CAPABILITIES
@@ -218,6 +224,14 @@ class TestToolSupportValidation:
         assert ok is True
         assert err is None
 
+    def test_validate_tool_support_glm5_supported(self):
+        """GLM-5 supports tools."""
+        from nano_agent.modules.provider_config import ProviderConfig
+
+        ok, err = ProviderConfig.validate_tool_support("glm-5")
+        assert ok is True
+        assert err is None
+
 
 # ── Phase 3: get_model_settings rewrite + GPT-5 bug fix ──
 
@@ -230,6 +244,15 @@ class TestGetModelSettings:
         from nano_agent.modules.provider_config import ProviderConfig
 
         ms = ProviderConfig.get_model_settings("glm-4.7", "zai")
+        assert ms.max_tokens == 131072
+        assert ms.temperature == 1.0
+        assert ms.top_p == 0.95
+
+    def test_get_model_settings_glm5(self):
+        """GLM-5 gets full capacity settings."""
+        from nano_agent.modules.provider_config import ProviderConfig
+
+        ms = ProviderConfig.get_model_settings("glm-5", "zai")
         assert ms.max_tokens == 131072
         assert ms.temperature == 1.0
         assert ms.top_p == 0.95
@@ -414,6 +437,20 @@ class TestIntegrationPipeline:
         assert ok is True
 
         ms = ProviderConfig.get_model_settings("glm-4.7", "zai")
+        assert isinstance(ms, ModelSettings)
+        assert ms.temperature == 1.0
+        assert ms.max_tokens == 131072
+        assert ms.top_p == 0.95
+
+    def test_glm5_full_pipeline(self):
+        """GLM-5: passes validation, gets full-capacity ModelSettings."""
+        from nano_agent.modules.provider_config import ProviderConfig
+        from agents import ModelSettings
+
+        ok, err = ProviderConfig.validate_tool_support("glm-5")
+        assert ok is True
+
+        ms = ProviderConfig.get_model_settings("glm-5", "zai")
         assert isinstance(ms, ModelSettings)
         assert ms.temperature == 1.0
         assert ms.max_tokens == 131072

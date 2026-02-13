@@ -7,9 +7,10 @@ Tests the tools that the OpenAI Agent SDK agent uses during execution.
 import pytest
 import tempfile
 import os
+import asyncio
 from pathlib import Path
 from datetime import datetime
-from unittest.mock import patch, mock_open
+from unittest.mock import patch, mock_open, AsyncMock, MagicMock
 
 from nano_agent.modules.nano_agent_tools import (
     _read_file_impl,
@@ -515,3 +516,30 @@ class TestRunTests:
         set_workspace(str(tmp_path))
         result = await _raw_run_tests("/etc", "pytest")
         assert "Error" in result
+
+    @pytest.mark.asyncio
+    async def test_run_tests_npm_execution(self, tmp_path):
+        """Run tests with npm framework via package.json auto-detection."""
+        set_workspace(str(tmp_path))
+        (tmp_path / "package.json").write_text('{"scripts": {"test": "jest"}}')
+
+        mock_proc = MagicMock()
+        mock_proc.communicate = AsyncMock(
+            return_value=(b"Tests: 5 passed, 0 failed\n", b"")
+        )
+        mock_proc.returncode = 0
+
+        with patch(
+            "asyncio.create_subprocess_shell",
+            AsyncMock(return_value=mock_proc),
+        ) as mock_create:
+            result = await _raw_run_tests(".", "auto")
+
+        # Verify npm command was built from FRAMEWORK_COMMANDS constant
+        call_args = mock_create.call_args
+        assert call_args.args[0] == FRAMEWORK_COMMANDS["npm"]
+        # Verify CWD is workspace
+        assert call_args.kwargs["cwd"] == str(tmp_path)
+        # Verify output assembly
+        assert "Tests: 5 passed" in result
+        assert "[exit_code: 0]" in result

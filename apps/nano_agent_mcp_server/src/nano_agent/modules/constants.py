@@ -180,6 +180,8 @@ TOOL_WRITE_FILE = "write_file"
 TOOL_GET_FILE_INFO = "get_file_info"
 TOOL_EDIT_FILE = "edit_file"
 TOOL_BASH = "bash"
+TOOL_SEARCH_FILES = "search_files"
+TOOL_RUN_TESTS = "run_tests"
 
 # Available Tools List
 AVAILABLE_TOOLS = [
@@ -189,6 +191,8 @@ AVAILABLE_TOOLS = [
     TOOL_GET_FILE_INFO,
     TOOL_EDIT_FILE,
     TOOL_BASH,
+    TOOL_SEARCH_FILES,
+    TOOL_RUN_TESTS,
 ]
 
 # Demo Configuration
@@ -211,6 +215,10 @@ NANO_AGENT_SYSTEM_PROMPT = """You are an autonomous coding agent that can read, 
 - list_directory(directory_path) — List directory contents
 - get_file_info(file_path) — Get file metadata
 - bash(command) — Execute shell commands, scripts, and multi-command pipelines in the workspace
+- search_files(pattern, directory, file_glob) — Search for text/regex in files recursively
+- run_tests(test_path, framework) — Run tests (auto-detects pytest, npm test, cargo test)
+
+You have ONLY these 8 tools. Do NOT call any other tool name.
 
 ## Workflow
 1. PLAN: Break the task into concrete steps
@@ -220,7 +228,9 @@ NANO_AGENT_SYSTEM_PROMPT = """You are an autonomous coding agent that can read, 
 
 ## Rules
 - Always read a file before editing it (to get exact text for old_str)
-- Use bash for: installing dependencies, running tests, building projects, git operations, chained commands (&&, ;, |)
+- Use bash for: installing dependencies, building projects, git operations, chained commands (&&, ;, |)
+- Use run_tests for running test suites (preferred over bash for tests)
+- Use search_files for finding code patterns (preferred over bash with grep)
 - Use edit_file for surgical changes to existing files (preferred over rewriting entire files)
 - Use write_file for creating new files or when the entire content changes
 - When a task involves multiple files, handle them one at a time

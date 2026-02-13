@@ -660,7 +660,7 @@ class TestQwen3CoderNextRegistration:
         cap = MODEL_CAPABILITIES["qwen3-coder-next"]
         assert cap.temperature == 1.0    # generation_config.json
         assert cap.top_p == 0.95         # generation_config.json
-        assert cap.max_tokens == 16000   # Practical agent limit
+        assert cap.max_tokens == 131072  # 128K output (256K context model)
 
     def test_qwen3_coder_next_supports_tools(self):
         """qwen3-coder-next supports tool calling (empirically verified)."""
@@ -685,7 +685,7 @@ class TestQwen3CoderNextRegistration:
         ms = ProviderConfig.get_model_settings("qwen3-coder-next", "lmstudio")
         assert isinstance(ms, ModelSettings)
         assert ms.temperature == 1.0
-        assert ms.max_tokens == 16000
+        assert ms.max_tokens == 131072
         assert ms.top_p == 0.95
         assert ms.parallel_tool_calls is True
         assert ms.extra_body == {"top_k": 40}

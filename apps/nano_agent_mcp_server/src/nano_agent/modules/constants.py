@@ -128,7 +128,7 @@ MODEL_CAPABILITIES: dict[str, ModelCapability] = {
     # LM Studio
     "qwen3-coder-next": ModelCapability(
         temperature=1.0,            # generation_config.json (empirically read from model dir)
-        max_tokens=16000,           # Practical agent limit (model supports 256K context)
+        max_tokens=131072,          # 128K output (model has 256K context, leaves 128K for input)
         top_p=0.95,                 # generation_config.json
         parallel_tool_calls=True,   # Empirically confirmed — returns tool_calls array
         extra_body={

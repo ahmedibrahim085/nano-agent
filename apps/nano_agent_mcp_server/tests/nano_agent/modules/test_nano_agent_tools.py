@@ -336,9 +336,11 @@ class TestSearchFiles:
 
     @pytest.fixture(autouse=True)
     def _reset_workspace(self):
-        """Reset workspace ContextVar after each test to avoid leaking state."""
-        yield
+        """Reset workspace ContextVar before and after each test."""
         from nano_agent.modules.nano_agent_tools import _workspace_dir_var, _bash_cwd_var
+        _workspace_dir_var.set(None)
+        _bash_cwd_var.set(None)
+        yield
         _workspace_dir_var.set(None)
         _bash_cwd_var.set(None)
 
@@ -400,15 +402,45 @@ class TestSearchFiles:
         assert "target.txt" in result
         assert "unique_search_term" in result
 
+    def test_search_files_path_traversal_blocked(self, tmp_path):
+        """Path traversal via directory parameter is blocked."""
+        set_workspace(str(tmp_path))
+        result = search_files_raw("pattern", "../../etc")
+        assert "Error" in result
+        assert "workspace" in result.lower() or "within" in result.lower()
+
+    def test_search_files_absolute_path_outside_workspace_blocked(self, tmp_path):
+        """Absolute path outside workspace is blocked."""
+        set_workspace(str(tmp_path))
+        result = search_files_raw("pattern", "/etc")
+        assert "Error" in result
+
+    def test_search_files_file_glob_path_separator_blocked(self, tmp_path):
+        """file_glob with path separators is blocked."""
+        set_workspace(str(tmp_path))
+        result = search_files_raw("pattern", ".", file_glob="../../*.env")
+        assert "Error" in result
+
+    def test_search_files_flag_injection_safe(self, tmp_path):
+        """Pattern with leading dash is safe due to -- end-of-options marker."""
+        set_workspace(str(tmp_path))
+        (tmp_path / "data.txt").write_text("-e malicious\n")
+        # The -- marker means this is treated as literal pattern, not grep flag
+        result = search_files_raw("-e malicious", str(tmp_path))
+        # Should find the text in data.txt (treated as pattern, not as grep -e flag)
+        assert "data.txt" in result
+
 
 class TestRunTests:
     """Test the run_tests tool."""
 
     @pytest.fixture(autouse=True)
     def _reset_workspace(self):
-        """Reset workspace ContextVar after each test to avoid leaking state."""
-        yield
+        """Reset workspace ContextVar before and after each test."""
         from nano_agent.modules.nano_agent_tools import _workspace_dir_var, _bash_cwd_var
+        _workspace_dir_var.set(None)
+        _bash_cwd_var.set(None)
+        yield
         _workspace_dir_var.set(None)
         _bash_cwd_var.set(None)
 
@@ -468,3 +500,18 @@ class TestRunTests:
         )
         result = await _raw_run_tests(str(tmp_path), "auto")
         assert "passed" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_run_tests_path_traversal_blocked(self, tmp_path):
+        """Path traversal via test_path is blocked."""
+        set_workspace(str(tmp_path))
+        result = await _raw_run_tests("../../etc", "pytest")
+        assert "Error" in result
+        assert "workspace" in result.lower() or "within" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_run_tests_absolute_path_outside_workspace_blocked(self, tmp_path):
+        """Absolute path outside workspace is blocked."""
+        set_workspace(str(tmp_path))
+        result = await _raw_run_tests("/etc", "pytest")
+        assert "Error" in result

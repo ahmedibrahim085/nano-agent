@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 import json
 import subprocess
+import shlex
 
 # Import function_tool decorator from agents SDK
 try:
@@ -735,11 +736,20 @@ def search_files_raw(pattern: str, directory: str = ".", file_glob: str = "*") -
     Returns:
         Matching lines with file paths and line numbers, or error/no-match message
     """
+    # Validate file_glob: only allow filename-level globs (no path separators)
+    if file_glob != "*" and ('/' in file_glob or '\\' in file_glob or '..' in file_glob):
+        return "Error: Invalid file_glob — must not contain path separators or '..'"
+
     workspace = get_workspace()
     if directory == ".":
         search_dir = workspace
     else:
         search_dir = resolve_path(directory)
+        # Validate resolved path is within workspace
+        try:
+            search_dir.resolve().relative_to(workspace.resolve())
+        except ValueError:
+            return f"Error: Directory must be within workspace: {directory}"
 
     if not search_dir.exists():
         return f"Error: Directory not found: {directory}"
@@ -750,6 +760,7 @@ def search_files_raw(pattern: str, directory: str = ".", file_glob: str = "*") -
         "grep", "-rn", "-E",
         "--include", file_glob,
         "--binary-files=without-match",
+        "--",
         pattern,
         str(search_dir),
     ]
@@ -841,6 +852,11 @@ async def _raw_run_tests(test_path: str = ".", framework: str = "auto") -> str:
         target = workspace
     else:
         target = resolve_path(test_path)
+        # Validate resolved path is within workspace
+        try:
+            target.resolve().relative_to(workspace.resolve())
+        except ValueError:
+            return f"Error: Test path must be within workspace: {test_path}"
 
     if not target.exists():
         return f"Error: Test path not found: {test_path}"
@@ -856,11 +872,11 @@ async def _raw_run_tests(test_path: str = ".", framework: str = "auto") -> str:
     # Build command
     base_cmd = FRAMEWORK_COMMANDS[framework]
     if target.is_file():
-        command = f"{base_cmd} {target}"
+        command = f"{base_cmd} {shlex.quote(str(target))}"
     elif target == workspace:
         command = base_cmd
     else:
-        command = f"{base_cmd} {target}"
+        command = f"{base_cmd} {shlex.quote(str(target))}"
 
     # Execute tests in the target directory
     run_dir = target if target.is_dir() else target.parent

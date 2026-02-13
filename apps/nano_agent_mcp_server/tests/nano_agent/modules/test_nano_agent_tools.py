@@ -591,3 +591,25 @@ class TestRunTests:
         # Error message returned with correct timeout value
         assert "Error" in result
         assert f"timed out after {test_timeout}s" in result
+
+    @pytest.mark.asyncio
+    async def test_run_tests_specific_file_target(self, tmp_path):
+        """Run tests targeting a specific file; other test files must not execute."""
+        set_workspace(str(tmp_path))
+        (tmp_path / "conftest.py").write_text("")
+        (tmp_path / "test_pass.py").write_text(
+            "def test_ok():\n    assert 1 + 1 == 2\n"
+        )
+        (tmp_path / "test_fail.py").write_text(
+            "def test_bad():\n    assert False, 'THIS_SHOULD_NOT_RUN'\n"
+        )
+
+        # Target ONLY the passing file
+        result = await _raw_run_tests(str(tmp_path / "test_pass.py"), "auto")
+
+        # Positive: targeted file ran and passed
+        assert "1 passed" in result
+        assert "exit_code: 0" in result
+        # Negative: failing file did NOT run
+        assert "failed" not in result.lower()
+        assert "THIS_SHOULD_NOT_RUN" not in result

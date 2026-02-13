@@ -5,6 +5,7 @@
 from .modules import typing_fix
 
 import logging
+import setproctitle
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 
@@ -48,6 +49,7 @@ mcp.tool()(check_providers)
 def run():
     """Entry point for the nano-agent command."""
     try:
+        setproctitle.setproctitle("nano-agent-mcp")
         logger.info("Starting Nano Agent MCP Server...")
         # FastMCP.run() handles its own async context with anyio
         # Don't wrap it in asyncio.run()

@@ -45,7 +45,7 @@ MODEL_INFO = {
     "gemma3:27b": "Gemma3 27B - Google's local model",
     "magistral:latest": "Magistral 24B - Local reasoning model",
     # LM Studio
-    "qwen3-coder-next": "Qwen3 Coder Next 80B (3B active) - MoE coding model via LM Studio",
+    "qwen/qwen3-coder-next": "Qwen3 Coder Next 80B (3B active) - MoE coding model via LM Studio",
     # Z.ai
     "glm-4.7": "GLM-4.7 - Z.ai flagship reasoning model",
     "glm-4.5-air": "GLM-4.5 Air - Z.ai fast model",
@@ -126,7 +126,7 @@ MODEL_CAPABILITIES: dict[str, ModelCapability] = {
         max_tokens=16000,
     ),
     # LM Studio
-    "qwen3-coder-next": ModelCapability(
+    "qwen/qwen3-coder-next": ModelCapability(
         temperature=1.0,            # generation_config.json (empirically read from model dir)
         max_tokens=131072,          # 128K output (model has 256K context, leaves 128K for input)
         top_p=0.95,                 # generation_config.json

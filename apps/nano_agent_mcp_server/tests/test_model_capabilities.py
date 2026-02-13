@@ -651,13 +651,13 @@ class TestQwen3CoderNextRegistration:
         """qwen3-coder-next is in MODEL_CAPABILITIES."""
         from nano_agent.modules.constants import MODEL_CAPABILITIES
 
-        assert "qwen3-coder-next" in MODEL_CAPABILITIES
+        assert "qwen/qwen3-coder-next" in MODEL_CAPABILITIES
 
     def test_qwen3_coder_next_official_params(self):
         """qwen3-coder-next has official generation_config.json values."""
         from nano_agent.modules.constants import MODEL_CAPABILITIES
 
-        cap = MODEL_CAPABILITIES["qwen3-coder-next"]
+        cap = MODEL_CAPABILITIES["qwen/qwen3-coder-next"]
         assert cap.temperature == 1.0    # generation_config.json
         assert cap.top_p == 0.95         # generation_config.json
         assert cap.max_tokens == 131072  # 128K output (256K context model)
@@ -666,14 +666,14 @@ class TestQwen3CoderNextRegistration:
         """qwen3-coder-next supports tool calling (empirically verified)."""
         from nano_agent.modules.constants import MODEL_CAPABILITIES
 
-        cap = MODEL_CAPABILITIES["qwen3-coder-next"]
+        cap = MODEL_CAPABILITIES["qwen/qwen3-coder-next"]
         assert cap.supports_tools is True
 
     def test_qwen3_coder_next_extra_body(self):
         """qwen3-coder-next has top_k=40 in extra_body."""
         from nano_agent.modules.constants import MODEL_CAPABILITIES
 
-        cap = MODEL_CAPABILITIES["qwen3-coder-next"]
+        cap = MODEL_CAPABILITIES["qwen/qwen3-coder-next"]
         assert cap.extra_body is not None
         assert cap.extra_body["top_k"] == 40
 
@@ -682,7 +682,7 @@ class TestQwen3CoderNextRegistration:
         from nano_agent.modules.provider_config import ProviderConfig
         from agents import ModelSettings
 
-        ms = ProviderConfig.get_model_settings("qwen3-coder-next", "lmstudio")
+        ms = ProviderConfig.get_model_settings("qwen/qwen3-coder-next", "lmstudio")
         assert isinstance(ms, ModelSettings)
         assert ms.temperature == 1.0
         assert ms.max_tokens == 131072
@@ -694,5 +694,5 @@ class TestQwen3CoderNextRegistration:
         """qwen3-coder-next has MODEL_INFO entry describing MoE architecture."""
         from nano_agent.modules.constants import MODEL_INFO
 
-        assert "qwen3-coder-next" in MODEL_INFO
-        assert "MoE" in MODEL_INFO["qwen3-coder-next"]
+        assert "qwen/qwen3-coder-next" in MODEL_INFO
+        assert "MoE" in MODEL_INFO["qwen/qwen3-coder-next"]

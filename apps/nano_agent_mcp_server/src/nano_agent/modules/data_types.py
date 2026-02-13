@@ -23,7 +23,7 @@ class PromptNanoAgentRequest(BaseModel):
         default="gpt-5-mini",
         description="LLM model to use for the agent"
     )
-    provider: Literal["openai", "anthropic", "ollama", "lmstudio", "zai"] = Field(
+    provider: Literal["openai", "anthropic", "ollama", "lmstudio", "zai", "qwen"] = Field(
         default="openai",
         description="LLM provider for the agent"
     )
@@ -54,7 +54,7 @@ class LaunchAgentRequest(BaseModel):
         default="gpt-5-mini",
         description="LLM model to use for the agent"
     )
-    provider: Literal["openai", "anthropic", "ollama", "lmstudio", "zai"] = Field(
+    provider: Literal["openai", "anthropic", "ollama", "lmstudio", "zai", "qwen"] = Field(
         default="openai",
         description="LLM provider for the agent"
     )
@@ -122,6 +122,26 @@ class ModelCapability(BaseModel):
         default=None,
         ge=0.0, le=1.0,
         description="Top-p sampling (None = use model default)"
+    )
+    # Standard OpenAI parameters (None = don't send, use provider default)
+    parallel_tool_calls: Optional[bool] = Field(
+        default=None,
+        description="Enable parallel tool calls (None = provider default)"
+    )
+    frequency_penalty: Optional[float] = Field(
+        default=None,
+        ge=-2.0, le=2.0,
+        description="Frequency penalty [-2.0, 2.0] (None = don't send)"
+    )
+    presence_penalty: Optional[float] = Field(
+        default=None,
+        ge=-2.0, le=2.0,
+        description="Presence penalty [-2.0, 2.0] (None = don't send)"
+    )
+    # Provider-specific parameters passed directly to API via extra_body
+    extra_body: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Provider-specific params passed as extra_body to API call"
     )
 
 
@@ -209,7 +229,7 @@ class CreateFileResponse(BaseModel):
 class AgentConfig(BaseModel):
     """Configuration for the nano agent."""
     model: str = Field(description="LLM model identifier")
-    provider: Literal["openai", "anthropic", "ollama", "lmstudio", "zai"] = Field(description="LLM provider")
+    provider: Literal["openai", "anthropic", "ollama", "lmstudio", "zai", "qwen"] = Field(description="LLM provider")
     temperature: float = Field(
         default=0.7,
         ge=0.0,

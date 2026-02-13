@@ -31,8 +31,11 @@ from ..modules.constants import (
     AVAILABLE_MODELS,
     ZAI_BASE_URL,
     ZAI_AVAILABLE_MODELS,
+    QWEN_BASE_URL,
+    QWEN_AVAILABLE_MODELS,
     MODEL_INFO,
 )
+from ..modules.qwen_auth import QWEN_CREDS_PATH
 from ..modules.nano_agent import prompt_nano_agent
 
 logger = logging.getLogger(__name__)
@@ -162,6 +165,16 @@ async def get_providers():
         ZAI_AVAILABLE_MODELS,
         ZAI_BASE_URL,
     ))
+    # Qwen Cloud: file-based OAuth, not env-var-based — check creds file directly
+    providers.append({
+        "name": "qwen",
+        "status": "online" if QWEN_CREDS_PATH.exists() else "no_api_key",
+        "latency_ms": None,
+        "model_count": len(QWEN_AVAILABLE_MODELS),
+        "models": QWEN_AVAILABLE_MODELS,
+        "base_url": QWEN_BASE_URL,
+        "type": "cloud",
+    })
 
     return {"providers": providers}
 
@@ -208,6 +221,17 @@ async def get_models():
             "type": "cloud",
             "description": MODEL_INFO.get(m, f"Z.ai {m}"),
             "status": "available" if has_zai else "no_api_key",
+        })
+
+    # Qwen Cloud
+    has_qwen = QWEN_CREDS_PATH.exists()
+    for m in QWEN_AVAILABLE_MODELS:
+        all_models.append({
+            "name": m,
+            "provider": "qwen",
+            "type": "cloud",
+            "description": MODEL_INFO.get(m, f"Qwen {m}"),
+            "status": "available" if has_qwen else "no_api_key",
         })
 
     return {"models": all_models}

@@ -328,12 +328,13 @@ async def test_check_all_providers_async_concurrent():
         result = await check_all_providers_async()
 
     assert result.success is True
-    assert len(result.providers) == 5
+    assert len(result.providers) == 6
     assert "openai" in result.providers
     assert "anthropic" in result.providers
     assert "ollama" in result.providers
     assert "lmstudio" in result.providers
     assert "zai" in result.providers
+    assert "qwen" in result.providers
     # Total time should be close to 100ms (max of individual), not 500ms (sum)
     assert result.total_check_time_ms < 200  # Should be ~100ms, not 500ms
 
@@ -372,16 +373,18 @@ async def test_check_all_providers_async_counters():
             return ProviderHealthStatus(status="partial", available_models=["model1"], latency_ms=50)
         elif provider == "lmstudio":
             return ProviderHealthStatus(status="up", available_models=["model2"], latency_ms=50)
-        else:  # zai
+        elif provider == "zai":
             return ProviderHealthStatus(status="down", available_models=[], error="No key")
+        else:  # qwen
+            return ProviderHealthStatus(status="up", available_models=["coder-model"], latency_ms=1)
 
     with patch("nano_agent.modules.provider_config._check_provider_health", side_effect=mock_check):
         result = await check_all_providers_async()
 
-    assert result.providers_up == 2
+    assert result.providers_up == 3
     assert result.providers_down == 2
     assert result.providers_partial == 1
-    assert result.providers_up + result.providers_down + result.providers_partial == 5
+    assert result.providers_up + result.providers_down + result.providers_partial == 6
 
 
 @pytest.mark.asyncio
@@ -394,7 +397,8 @@ async def test_check_all_providers_async_total_time():
             "anthropic": 1,
             "ollama": 50,
             "lmstudio": 40,
-            "zai": 1
+            "zai": 1,
+            "qwen": 1,
         }
         await asyncio.sleep(latencies[provider] / 1000)  # Convert to seconds
         return ProviderHealthStatus(
@@ -432,7 +436,7 @@ async def test_check_all_providers_async_one_exception():
     # Other providers should succeed
     assert result.providers["anthropic"].status == "up"
     assert result.providers["zai"].status == "up"
-    assert result.providers_up == 4
+    assert result.providers_up == 5
     assert result.providers_down == 1
 
 
@@ -450,7 +454,7 @@ async def test_check_all_providers_async_all_down():
         result = await check_all_providers_async()
 
     assert result.success is True  # Check succeeded, even though all providers are down
-    assert result.providers_down == 5
+    assert result.providers_down == 6
     assert result.providers_up == 0
     assert result.providers_partial == 0
     for provider, status in result.providers.items():
@@ -473,10 +477,11 @@ async def test_check_providers_mcp_tool():
             "anthropic": ProviderHealthStatus(status="up", available_models=["claude"], latency_ms=1),
             "ollama": ProviderHealthStatus(status="up", available_models=["model"], latency_ms=50),
             "lmstudio": ProviderHealthStatus(status="up", available_models=["model"], latency_ms=40),
-            "zai": ProviderHealthStatus(status="up", available_models=["glm"], latency_ms=1)
+            "zai": ProviderHealthStatus(status="up", available_models=["glm"], latency_ms=1),
+            "qwen": ProviderHealthStatus(status="up", available_models=["coder-model"], latency_ms=1),
         },
         total_check_time_ms=100,
-        providers_up=5,
+        providers_up=6,
         providers_down=0,
         providers_partial=0
     )
@@ -487,8 +492,8 @@ async def test_check_providers_mcp_tool():
     assert isinstance(result, dict)
     assert result["success"] is True
     assert "providers" in result
-    assert result["providers_up"] == 5
-    assert len(result["providers"]) == 5
+    assert result["providers_up"] == 6
+    assert len(result["providers"]) == 6
 
 
 # ============================================================================

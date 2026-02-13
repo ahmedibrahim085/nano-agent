@@ -2,7 +2,7 @@
 Provider Configuration for Multi-Model Support.
 
 This module provides a thin abstraction layer for creating agents
-with different model providers (OpenAI, Anthropic, Ollama).
+with different model providers (OpenAI, Anthropic, Ollama, LM Studio, Z.ai, Qwen).
 """
 
 from typing import Optional, Union
@@ -70,6 +70,14 @@ class ProviderConfig:
         settings["max_tokens"] = caps.max_tokens
         if caps.top_p is not None:
             settings["top_p"] = caps.top_p
+        if caps.parallel_tool_calls is not None:
+            settings["parallel_tool_calls"] = caps.parallel_tool_calls
+        if caps.frequency_penalty is not None:
+            settings["frequency_penalty"] = caps.frequency_penalty
+        if caps.presence_penalty is not None:
+            settings["presence_penalty"] = caps.presence_penalty
+        if caps.extra_body is not None:
+            settings["extra_body"] = caps.extra_body
 
         logger.debug(f"Model settings for {model} ({provider}): {settings}")
         return ModelSettings(**settings)
@@ -90,7 +98,7 @@ class ProviderConfig:
             instructions: System instructions for the agent
             tools: List of tool functions
             model: Model identifier
-            provider: Provider name ('openai', 'anthropic', 'ollama')
+            provider: Provider name ('openai', 'anthropic', 'ollama', 'lmstudio', 'zai', 'qwen')
             model_settings: Optional model settings
             
         Returns:
@@ -182,6 +190,27 @@ class ProviderConfig:
                 model_settings=model_settings
             )
 
+        elif provider == "qwen":
+            # Qwen Cloud: OpenAI-compatible endpoint with OAuth token
+            from .qwen_auth import get_valid_token
+            from .constants import QWEN_BASE_URL
+            logger.debug(f"Creating Qwen Cloud agent with model: {model}")
+            token = get_valid_token()
+            qwen_client = AsyncOpenAI(
+                base_url=QWEN_BASE_URL,
+                api_key=token,
+            )
+            return Agent(
+                name=name,
+                instructions=instructions,
+                tools=tools,
+                model=OpenAIChatCompletionsModel(
+                    model=model,
+                    openai_client=qwen_client,
+                ),
+                model_settings=model_settings,
+            )
+
         else:
             raise ValueError(f"Unsupported provider: {provider}")
     
@@ -218,6 +247,16 @@ class ProviderConfig:
             required_key = provider_requirements.get(provider)
             if required_key and not os.getenv(required_key):
                 return False, f"Missing environment variable: {required_key}"
+            return True, None
+
+        # Qwen Cloud: validate model + credentials file
+        if provider == "qwen":
+            from .constants import QWEN_AVAILABLE_MODELS
+            if model not in QWEN_AVAILABLE_MODELS:
+                return False, f"Model '{model}' not available for Qwen Cloud. Available: {', '.join(QWEN_AVAILABLE_MODELS)}"
+            from .qwen_auth import QWEN_CREDS_PATH
+            if not QWEN_CREDS_PATH.exists():
+                return False, f"Qwen OAuth credentials not found at {QWEN_CREDS_PATH}. Run 'qwen' CLI to authenticate first."
             return True, None
 
         if provider in LOCAL_PROVIDER_CONFIG:
@@ -270,6 +309,16 @@ class ProviderConfig:
                 return False, f"Missing environment variable: {required_key}"
             return True, None
 
+        # Qwen Cloud: validate model + credentials file (async)
+        if provider == "qwen":
+            from .constants import QWEN_AVAILABLE_MODELS
+            if model not in QWEN_AVAILABLE_MODELS:
+                return False, f"Model '{model}' not available for Qwen Cloud. Available: {', '.join(QWEN_AVAILABLE_MODELS)}"
+            from .qwen_auth import QWEN_CREDS_PATH
+            if not QWEN_CREDS_PATH.exists():
+                return False, f"Qwen OAuth credentials not found at {QWEN_CREDS_PATH}. Run 'qwen' CLI to authenticate first."
+            return True, None
+
         if provider in LOCAL_PROVIDER_CONFIG:
             base_url, endpoint, extract_models, start_hint = LOCAL_PROVIDER_CONFIG[provider]
             try:
@@ -303,7 +352,7 @@ async def _check_provider_health(provider: str) -> ProviderHealthStatus:
     """Check health of a single provider.
 
     Args:
-        provider: Provider name (openai, anthropic, ollama, lmstudio, zai)
+        provider: Provider name (openai, anthropic, ollama, lmstudio, zai, qwen)
 
     Returns:
         ProviderHealthStatus with status, models, latency, and error
@@ -414,6 +463,23 @@ async def _check_provider_health(provider: str) -> ProviderHealthStatus:
             return ProviderHealthStatus(
                 status="up",
                 available_models=ZAI_AVAILABLE_MODELS,
+                latency_ms=latency_ms
+            )
+
+        # Qwen Cloud: OAuth credentials file check + static model list
+        elif provider == "qwen":
+            from .qwen_auth import QWEN_CREDS_PATH
+            if not QWEN_CREDS_PATH.exists():
+                return ProviderHealthStatus(
+                    status="down",
+                    available_models=[],
+                    error=f"Qwen OAuth credentials not found at {QWEN_CREDS_PATH}. Run 'qwen' CLI to authenticate first."
+                )
+            from .constants import QWEN_AVAILABLE_MODELS
+            latency_ms = (time.perf_counter() - start_time) * 1000
+            return ProviderHealthStatus(
+                status="up",
+                available_models=QWEN_AVAILABLE_MODELS,
                 latency_ms=latency_ms
             )
 
@@ -530,14 +596,14 @@ async def _check_provider_health(provider: str) -> ProviderHealthStatus:
 
 
 async def check_all_providers_async() -> CheckProvidersResponse:
-    """Check health of all 5 providers concurrently.
+    """Check health of all 6 providers concurrently.
 
     Returns:
         CheckProvidersResponse with status for all providers
     """
     start_time = time.perf_counter()
 
-    providers = ["openai", "anthropic", "ollama", "lmstudio", "zai"]
+    providers = ["openai", "anthropic", "ollama", "lmstudio", "zai", "qwen"]
     tasks = [_check_provider_health(p) for p in providers]
 
     # Execute all checks concurrently

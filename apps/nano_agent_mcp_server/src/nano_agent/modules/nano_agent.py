@@ -616,6 +616,7 @@ async def prompt_nano_agent(
                OpenAI: gpt-5-mini (default), gpt-5-nano, gpt-5, gpt-4o
                Ollama: gpt-oss:20b, gpt-oss:120b, qwen3-coder:30b
                Z.ai: glm-4.7, glm-4.5-air
+               Qwen: coder-model
 
         provider: The LLM provider. Options:
                  - "openai" (default): OpenAI's GPT models
@@ -623,6 +624,7 @@ async def prompt_nano_agent(
                  - "zai": Z.ai cloud models via LiteLLM
                  - "anthropic": Anthropic's Claude models
                  - "lmstudio": LM Studio local models
+                 - "qwen": Qwen Cloud models via OAuth
 
         workspace: Working directory for the agent. Shell commands execute here
                   and relative file paths resolve from here. Defaults to cwd.

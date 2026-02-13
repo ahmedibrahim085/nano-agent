@@ -17,7 +17,12 @@ from nano_agent.modules.nano_agent_tools import (
     read_file_raw,
     write_file_raw,
     list_files,
-    get_file_metadata
+    get_file_metadata,
+    search_files_raw,
+    set_workspace,
+    _raw_run_tests,
+    _detect_test_framework,
+    FRAMEWORK_COMMANDS
 )
 from nano_agent.modules.data_types import (
     ReadFileRequest,
@@ -324,3 +329,189 @@ class TestUtilityFunctions:
         """Test getting info for a directory."""
         info = get_file_metadata(str(tmp_path))
         assert info is None
+
+
+class TestSearchFiles:
+    """Test the search_files tool."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_workspace(self):
+        """Reset workspace ContextVar before and after each test."""
+        from nano_agent.modules.nano_agent_tools import _workspace_dir_var, _bash_cwd_var
+        _workspace_dir_var.set(None)
+        _bash_cwd_var.set(None)
+        yield
+        _workspace_dir_var.set(None)
+        _bash_cwd_var.set(None)
+
+    def test_search_files_basic_pattern(self, tmp_path):
+        """Test finding a known string in files."""
+        set_workspace(str(tmp_path))
+        (tmp_path / "hello.txt").write_text("Hello World\nGoodbye World\n")
+        (tmp_path / "other.txt").write_text("Nothing here\n")
+        result = search_files_raw("Hello", str(tmp_path))
+        assert "hello.txt" in result
+        assert "Hello World" in result
+        assert "other.txt" not in result
+
+    def test_search_files_regex_pattern(self, tmp_path):
+        """Test regex pattern search."""
+        set_workspace(str(tmp_path))
+        (tmp_path / "code.py").write_text("def foo():\n    return 42\ndef bar():\n    pass\n")
+        result = search_files_raw("def [a-z]+\\(\\)", str(tmp_path))
+        assert "def foo()" in result
+        assert "def bar()" in result
+
+    def test_search_files_with_glob(self, tmp_path):
+        """Test file glob filtering."""
+        set_workspace(str(tmp_path))
+        (tmp_path / "code.py").write_text("pattern_match\n")
+        (tmp_path / "readme.txt").write_text("pattern_match\n")
+        result = search_files_raw("pattern_match", str(tmp_path), file_glob="*.py")
+        assert "code.py" in result
+        assert "readme.txt" not in result
+
+    def test_search_files_no_matches(self, tmp_path):
+        """Test when no matches found."""
+        set_workspace(str(tmp_path))
+        (tmp_path / "file.txt").write_text("nothing relevant\n")
+        result = search_files_raw("NONEXISTENT_STRING_XYZ", str(tmp_path))
+        assert result == "No matches found"
+
+    def test_search_files_nonexistent_directory(self, tmp_path):
+        """Test with non-existent directory."""
+        set_workspace(str(tmp_path))
+        result = search_files_raw("pattern", str(tmp_path / "nonexistent"))
+        assert "Error" in result
+
+    def test_search_files_output_truncation(self, tmp_path):
+        """Test that large output is truncated."""
+        set_workspace(str(tmp_path))
+        # Create a file with many matching lines
+        content = "\n".join([f"match_line_{i}" for i in range(10000)])
+        (tmp_path / "large.txt").write_text(content)
+        result = search_files_raw("match_line_", str(tmp_path))
+        # Result should be truncated to BASH_OUTPUT_MAX_CHARS
+        assert len(result) <= 35000  # some margin above 30000
+
+    def test_search_files_default_directory(self, tmp_path):
+        """Test that directory='.' uses workspace."""
+        set_workspace(str(tmp_path))
+        (tmp_path / "target.txt").write_text("unique_search_term\n")
+        result = search_files_raw("unique_search_term")
+        assert "target.txt" in result
+        assert "unique_search_term" in result
+
+    def test_search_files_path_traversal_blocked(self, tmp_path):
+        """Path traversal via directory parameter is blocked."""
+        set_workspace(str(tmp_path))
+        result = search_files_raw("pattern", "../../etc")
+        assert "Error" in result
+        assert "workspace" in result.lower() or "within" in result.lower()
+
+    def test_search_files_absolute_path_outside_workspace_blocked(self, tmp_path):
+        """Absolute path outside workspace is blocked."""
+        set_workspace(str(tmp_path))
+        result = search_files_raw("pattern", "/etc")
+        assert "Error" in result
+
+    def test_search_files_file_glob_path_separator_blocked(self, tmp_path):
+        """file_glob with path separators is blocked."""
+        set_workspace(str(tmp_path))
+        result = search_files_raw("pattern", ".", file_glob="../../*.env")
+        assert "Error" in result
+
+    def test_search_files_flag_injection_safe(self, tmp_path):
+        """Pattern with leading dash is safe due to -- end-of-options marker."""
+        set_workspace(str(tmp_path))
+        (tmp_path / "data.txt").write_text("-e malicious\n")
+        # The -- marker means this is treated as literal pattern, not grep flag
+        result = search_files_raw("-e malicious", str(tmp_path))
+        # Should find the text in data.txt (treated as pattern, not as grep -e flag)
+        assert "data.txt" in result
+
+
+class TestRunTests:
+    """Test the run_tests tool."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_workspace(self):
+        """Reset workspace ContextVar before and after each test."""
+        from nano_agent.modules.nano_agent_tools import _workspace_dir_var, _bash_cwd_var
+        _workspace_dir_var.set(None)
+        _bash_cwd_var.set(None)
+        yield
+        _workspace_dir_var.set(None)
+        _bash_cwd_var.set(None)
+
+    def test_detect_test_framework_pytest_conftest(self, tmp_path):
+        """Detect pytest from conftest.py."""
+        (tmp_path / "conftest.py").write_text("")
+        assert _detect_test_framework(str(tmp_path)) == "pytest"
+
+    def test_detect_test_framework_pytest_pyproject(self, tmp_path):
+        """Detect pytest from pyproject.toml with [tool.pytest]."""
+        (tmp_path / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
+        assert _detect_test_framework(str(tmp_path)) == "pytest"
+
+    def test_detect_test_framework_npm(self, tmp_path):
+        """Detect npm from package.json."""
+        (tmp_path / "package.json").write_text('{"scripts": {"test": "jest"}}')
+        assert _detect_test_framework(str(tmp_path)) == "npm"
+
+    def test_detect_test_framework_cargo(self, tmp_path):
+        """Detect cargo from Cargo.toml."""
+        (tmp_path / "Cargo.toml").write_text("[package]\n")
+        assert _detect_test_framework(str(tmp_path)) == "cargo"
+
+    def test_detect_test_framework_fallback_pytest(self, tmp_path):
+        """Fall back to pytest when no markers found."""
+        assert _detect_test_framework(str(tmp_path)) == "pytest"
+
+    @pytest.mark.asyncio
+    async def test_run_tests_explicit_pytest(self, tmp_path):
+        """Run pytest explicitly on a passing test file."""
+        set_workspace(str(tmp_path))
+        # Create a minimal passing test
+        (tmp_path / "test_sample.py").write_text(
+            "def test_ok():\n    assert 1 + 1 == 2\n"
+        )
+        result = await _raw_run_tests(str(tmp_path), "pytest")
+        assert "passed" in result.lower() or "1 passed" in result
+
+    @pytest.mark.asyncio
+    async def test_run_tests_test_failure(self, tmp_path):
+        """Test failure output is returned (not raised as error)."""
+        set_workspace(str(tmp_path))
+        (tmp_path / "test_fail.py").write_text(
+            "def test_bad():\n    assert False\n"
+        )
+        result = await _raw_run_tests(str(tmp_path), "pytest")
+        # Should contain failure info, NOT be an error string
+        assert "failed" in result.lower() or "FAILED" in result
+
+    @pytest.mark.asyncio
+    async def test_run_tests_auto_detect_pytest(self, tmp_path):
+        """Auto-detect pytest and run."""
+        set_workspace(str(tmp_path))
+        (tmp_path / "conftest.py").write_text("")
+        (tmp_path / "test_auto.py").write_text(
+            "def test_auto():\n    assert True\n"
+        )
+        result = await _raw_run_tests(str(tmp_path), "auto")
+        assert "passed" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_run_tests_path_traversal_blocked(self, tmp_path):
+        """Path traversal via test_path is blocked."""
+        set_workspace(str(tmp_path))
+        result = await _raw_run_tests("../../etc", "pytest")
+        assert "Error" in result
+        assert "workspace" in result.lower() or "within" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_run_tests_absolute_path_outside_workspace_blocked(self, tmp_path):
+        """Absolute path outside workspace is blocked."""
+        set_workspace(str(tmp_path))
+        result = await _raw_run_tests("/etc", "pytest")
+        assert "Error" in result

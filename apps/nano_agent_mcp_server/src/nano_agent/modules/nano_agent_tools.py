@@ -14,6 +14,8 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, Any
 import json
+import subprocess
+import shlex
 
 # Import function_tool decorator from agents SDK
 try:
@@ -722,6 +724,216 @@ async def bash(command: str) -> str:
         return f"Error executing command: {str(e)}"
 
 
+def search_files_raw(pattern: str, directory: str = ".", file_glob: str = "*") -> str:
+    """
+    Search for a pattern in files recursively using grep.
+
+    Args:
+        pattern: Text or regex pattern to search for
+        directory: Directory to search in (default: workspace root)
+        file_glob: File glob pattern to filter (e.g., "*.py", "*.js")
+
+    Returns:
+        Matching lines with file paths and line numbers, or error/no-match message
+    """
+    # Validate file_glob: only allow filename-level globs (no path separators)
+    if file_glob != "*" and ('/' in file_glob or '\\' in file_glob or '..' in file_glob):
+        return "Error: Invalid file_glob — must not contain path separators or '..'"
+
+    workspace = get_workspace()
+    if directory == ".":
+        search_dir = workspace
+    else:
+        search_dir = resolve_path(directory)
+        # Validate resolved path is within workspace
+        try:
+            search_dir.resolve().relative_to(workspace.resolve())
+        except ValueError:
+            return f"Error: Directory must be within workspace: {directory}"
+
+    if not search_dir.exists():
+        return f"Error: Directory not found: {directory}"
+    if not search_dir.is_dir():
+        return f"Error: Not a directory: {directory}"
+
+    cmd = [
+        "grep", "-rn", "-E",
+        "--include", file_glob,
+        "--binary-files=without-match",
+        "--",
+        pattern,
+        str(search_dir),
+    ]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=COMMAND_TIMEOUT_SECONDS
+        )
+        if result.returncode == 1:  # grep returns 1 for no matches
+            return "No matches found"
+        if result.returncode != 0:
+            return f"Error: {result.stderr.strip()}"
+        output = result.stdout.strip()
+        if len(output) > BASH_OUTPUT_MAX_CHARS:
+            head = int(BASH_OUTPUT_MAX_CHARS * BASH_OUTPUT_HEAD_RATIO)
+            tail = int(BASH_OUTPUT_MAX_CHARS * BASH_OUTPUT_TAIL_RATIO)
+            output = output[:head] + "\n...(truncated)...\n" + output[-tail:]
+        return output
+    except subprocess.TimeoutExpired:
+        return f"Error: Search timed out after {COMMAND_TIMEOUT_SECONDS}s"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+
+@function_tool
+def search_files(pattern: str, directory: str = ".", file_glob: str = "*") -> str:
+    """Search for a pattern in files recursively. Returns matching lines with file paths and line numbers.
+
+    Args:
+        pattern: Text or regex pattern to search for
+        directory: Directory to search in (default: workspace root)
+        file_glob: File glob pattern to filter (e.g., "*.py", "*.js")
+    """
+    capture_args("search_files", pattern=pattern, directory=directory, file_glob=file_glob)
+    return search_files_raw(pattern, directory, file_glob)
+
+
+# Test framework detection and execution
+
+FRAMEWORK_COMMANDS = {
+    "pytest": "python -m pytest",
+    "unittest": "python -m unittest discover",
+    "npm": "npm test",
+    "jest": "npx jest",
+    "cargo": "cargo test",
+}
+
+
+def _detect_test_framework(workspace: str) -> str:
+    """Auto-detect test framework from workspace markers.
+
+    Priority: pytest markers > package.json > Cargo.toml > fallback pytest.
+    """
+    ws = Path(workspace)
+    if (ws / "pytest.ini").exists() or (ws / "conftest.py").exists():
+        return "pytest"
+    if (ws / "pyproject.toml").exists():
+        try:
+            content = (ws / "pyproject.toml").read_text()
+            if "[tool.pytest" in content:
+                return "pytest"
+        except Exception:
+            pass
+    if (ws / "setup.cfg").exists():
+        try:
+            content = (ws / "setup.cfg").read_text()
+            if "[tool:pytest]" in content:
+                return "pytest"
+        except Exception:
+            pass
+    if (ws / "package.json").exists():
+        return "npm"
+    if (ws / "Cargo.toml").exists():
+        return "cargo"
+    return "pytest"  # Default fallback
+
+
+async def _raw_run_tests(test_path: str = ".", framework: str = "auto") -> str:
+    """Raw implementation for run_tests tool.
+
+    Args:
+        test_path: Path to test file or directory
+        framework: Test framework: "auto", "pytest", "unittest", "npm", "jest", "cargo"
+
+    Returns:
+        Test output (both pass and fail cases) or error message.
+    """
+    workspace = get_workspace()
+    if test_path == ".":
+        target = workspace
+    else:
+        target = resolve_path(test_path)
+        # Validate resolved path is within workspace
+        try:
+            target.resolve().relative_to(workspace.resolve())
+        except ValueError:
+            return f"Error: Test path must be within workspace: {test_path}"
+
+    if not target.exists():
+        return f"Error: Test path not found: {test_path}"
+
+    # Detect framework
+    if framework == "auto":
+        detect_dir = target if target.is_dir() else target.parent
+        framework = _detect_test_framework(str(detect_dir))
+
+    if framework not in FRAMEWORK_COMMANDS:
+        return f"Error: Unknown test framework '{framework}'. Supported: {', '.join(FRAMEWORK_COMMANDS.keys())}"
+
+    # Build command
+    base_cmd = FRAMEWORK_COMMANDS[framework]
+    if target.is_file():
+        command = f"{base_cmd} {shlex.quote(str(target))}"
+    elif target == workspace:
+        command = base_cmd
+    else:
+        command = f"{base_cmd} {shlex.quote(str(target))}"
+
+    # Execute tests in the target directory
+    run_dir = target if target.is_dir() else target.parent
+
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            command,
+            cwd=str(run_dir),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=os.environ.copy(),
+        )
+
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=COMMAND_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.communicate()
+            return f"Error: Tests timed out after {COMMAND_TIMEOUT_SECONDS}s"
+
+        stdout = stdout_bytes.decode("utf-8", errors="ignore")
+        stderr = stderr_bytes.decode("utf-8", errors="ignore")
+
+        parts = []
+        if stdout.strip():
+            parts.append(stdout.strip())
+        if stderr.strip():
+            parts.append(f"stderr:\n{stderr.strip()}")
+        parts.append(f"[exit_code: {proc.returncode}]")
+
+        result = "\n".join(parts)
+        # Truncate same as bash tool
+        if len(result) > BASH_OUTPUT_MAX_CHARS:
+            head = int(BASH_OUTPUT_MAX_CHARS * BASH_OUTPUT_HEAD_RATIO)
+            tail = int(BASH_OUTPUT_MAX_CHARS * BASH_OUTPUT_TAIL_RATIO)
+            result = result[:head] + "\n...(truncated)...\n" + result[-tail:]
+        return result
+
+    except Exception as e:
+        return f"Error executing tests: {str(e)}"
+
+
+@function_tool
+async def run_tests(test_path: str = ".", framework: str = "auto") -> str:
+    """Run tests in the workspace. Auto-detects test framework if not specified.
+
+    Args:
+        test_path: Path to test file or directory (default: workspace root)
+        framework: Test framework: "auto", "pytest", "unittest", "npm", "jest", "cargo"
+    """
+    capture_args("run_tests", test_path=test_path, framework=framework)
+    return await _raw_run_tests(test_path, framework)
+
+
 # Export all tools for the agent
 def get_nano_agent_tools():
     """
@@ -737,4 +949,6 @@ def get_nano_agent_tools():
         get_file_info,
         edit_file,
         bash,
+        search_files,
+        run_tests,
     ]

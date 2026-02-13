@@ -44,6 +44,8 @@ MODEL_INFO = {
     "qwen3-coder:30b": "Qwen3 Coder 30B - Local coding specialist",
     "gemma3:27b": "Gemma3 27B - Google's local model",
     "magistral:latest": "Magistral 24B - Local reasoning model",
+    # LM Studio
+    "qwen/qwen3-coder-next": "Qwen3 Coder Next 80B (3B active) - MoE coding model via LM Studio",
     # Z.ai
     "glm-4.7": "GLM-4.7 - Z.ai flagship reasoning model",
     "glm-4.5-air": "GLM-4.5 Air - Z.ai fast model",
@@ -70,7 +72,7 @@ QWEN_BASE_URL = "https://portal.qwen.ai/v1"
 QWEN_AVAILABLE_MODELS = ["coder-model"]
 
 # Agent Configuration
-MAX_AGENT_TURNS = 20  # Maximum turns in agent loop
+MAX_AGENT_TURNS = 50  # Maximum turns in agent loop
 
 # Per-model capabilities registry
 
@@ -123,6 +125,16 @@ MODEL_CAPABILITIES: dict[str, ModelCapability] = {
     "magistral:latest": ModelCapability(
         max_tokens=16000,
     ),
+    # LM Studio
+    "qwen/qwen3-coder-next": ModelCapability(
+        temperature=1.0,            # generation_config.json (empirically read from model dir)
+        max_tokens=131072,          # 128K output (model has 256K context, leaves 128K for input)
+        top_p=0.95,                 # generation_config.json
+        parallel_tool_calls=True,   # Empirically confirmed — returns tool_calls array
+        extra_body={
+            "top_k": 40,            # generation_config.json; LM Studio accepts as body param
+        },
+    ),
     # Z.ai
     "glm-4.7": ModelCapability(
         temperature=1.0,
@@ -168,6 +180,8 @@ TOOL_WRITE_FILE = "write_file"
 TOOL_GET_FILE_INFO = "get_file_info"
 TOOL_EDIT_FILE = "edit_file"
 TOOL_BASH = "bash"
+TOOL_SEARCH_FILES = "search_files"
+TOOL_RUN_TESTS = "run_tests"
 
 # Available Tools List
 AVAILABLE_TOOLS = [
@@ -177,6 +191,8 @@ AVAILABLE_TOOLS = [
     TOOL_GET_FILE_INFO,
     TOOL_EDIT_FILE,
     TOOL_BASH,
+    TOOL_SEARCH_FILES,
+    TOOL_RUN_TESTS,
 ]
 
 # Demo Configuration
@@ -199,6 +215,10 @@ NANO_AGENT_SYSTEM_PROMPT = """You are an autonomous coding agent that can read, 
 - list_directory(directory_path) — List directory contents
 - get_file_info(file_path) — Get file metadata
 - bash(command) — Execute shell commands, scripts, and multi-command pipelines in the workspace
+- search_files(pattern, directory, file_glob) — Search for text/regex in files recursively
+- run_tests(test_path, framework) — Run tests (auto-detects pytest, npm test, cargo test)
+
+You have ONLY these 8 tools. Do NOT call any other tool name.
 
 ## Workflow
 1. PLAN: Break the task into concrete steps
@@ -208,7 +228,9 @@ NANO_AGENT_SYSTEM_PROMPT = """You are an autonomous coding agent that can read, 
 
 ## Rules
 - Always read a file before editing it (to get exact text for old_str)
-- Use bash for: installing dependencies, running tests, building projects, git operations, chained commands (&&, ;, |)
+- Use bash for: installing dependencies, building projects, git operations, chained commands (&&, ;, |)
+- Use run_tests for running test suites (preferred over bash for tests)
+- Use search_files for finding code patterns (preferred over bash with grep)
 - Use edit_file for surgical changes to existing files (preferred over rewriting entire files)
 - Use write_file for creating new files or when the entire content changes
 - When a task involves multiple files, handle them one at a time

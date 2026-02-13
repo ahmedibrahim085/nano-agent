@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 import json
 import asyncio
+import threading
 
 # OpenAI Agent SDK imports (required)
 from agents import Agent, Runner, RunConfig, ModelSettings
@@ -61,6 +62,131 @@ from .provider_config import ProviderConfig, check_all_providers_async
 # Initialize logger and rich console
 logger = logging.getLogger(__name__)
 console = Console()
+
+_patch_lock = threading.Lock()
+_patch_applied = False
+
+
+def _patch_tool_resilience():
+    """Pre-filter monkey-patch: handle unknown tool calls gracefully.
+
+    Instead of letting the SDK crash with ModelBehaviorError when a model
+    calls an unknown tool (turn_resolution.py:1473), this patch:
+    1. Scans response.output for unknown ResponseFunctionToolCall items
+    2. Removes them from the response
+    3. Calls the original function with only valid items
+    4. Appends synthetic ToolCallItem + ToolCallOutputItem for each unknown call
+
+    This preserves valid tool execution while letting the model self-correct.
+    Pattern: SDK's own approvals.py:22-39 (append_approval_error_output).
+    SDK Issue: https://github.com/openai/openai-agents-python/issues/325
+    """
+    global _patch_applied
+    with _patch_lock:
+        if _patch_applied:
+            return
+
+        from agents.run_internal import turn_resolution as _tr
+        from agents.tool import FunctionTool
+        from agents.items import (
+            ModelResponse as _ModelResponse,
+            ToolCallItem,
+            ToolCallOutputItem,
+            ItemHelpers,
+        )
+        from openai.types.responses import ResponseFunctionToolCall
+
+        _original = _tr.process_model_response
+
+        # Also check the function attribute (belt-and-suspenders)
+        if getattr(_original, '_resilience_patched', False):
+            _patch_applied = True
+            return
+
+        def _resilient_process_model_response(
+            *, agent, all_tools, response, output_schema, handoffs
+        ):
+            # Fast path: empty or None output — let original handle
+            if not response.output:
+                return _original(
+                    agent=agent, all_tools=all_tools, response=response,
+                    output_schema=output_schema, handoffs=handoffs,
+                )
+
+            # Build lookup maps (same logic as original function)
+            function_map = {t.name: t for t in all_tools if isinstance(t, FunctionTool)}
+            handoff_map = {h.tool_name: h for h in handoffs}
+
+            # Scan for unknown function tool calls
+            unknown_calls = []
+            clean_output = []
+            for item in response.output:
+                if isinstance(item, ResponseFunctionToolCall):
+                    name = item.name
+                    if (name not in function_map
+                        and name not in handoff_map
+                        and not (output_schema is not None
+                                 and name == "json_tool_call")):
+                        unknown_calls.append(item)
+                        continue
+                clean_output.append(item)
+
+            if not unknown_calls:
+                # Fast path: no unknown tools, zero overhead
+                return _original(
+                    agent=agent, all_tools=all_tools, response=response,
+                    output_schema=output_schema, handoffs=handoffs,
+                )
+
+            # Build modified response with unknown calls removed
+            modified_response = _ModelResponse(
+                output=clean_output,
+                usage=response.usage,
+                response_id=response.response_id,
+            )
+
+            # Process valid items normally
+            result = _original(
+                agent=agent, all_tools=all_tools, response=modified_response,
+                output_schema=output_schema, handoffs=handoffs,
+            )
+
+            # Append synthetic error items for each unknown call
+            available_names = sorted(t.name for t in all_tools if hasattr(t, 'name'))
+            error_msg = (
+                f"Tool not found. Available tools: {', '.join(available_names)}. "
+                f"Please use one of these tools instead."
+            )
+
+            for call in unknown_calls:
+                # ToolCallItem so the call appears in conversation history
+                result.new_items.append(
+                    ToolCallItem(raw_item=call, agent=agent)
+                )
+                # ToolCallOutputItem with error (pattern from approvals.py:33-38)
+                result.new_items.append(
+                    ToolCallOutputItem(
+                        output=error_msg,
+                        raw_item=ItemHelpers.tool_call_output_item(call, error_msg),
+                        agent=agent,
+                    )
+                )
+                result.tools_used.append(call.name)
+
+                logger.warning(
+                    "Tool hallucination recovered: '%s'. Sent available tools list.",
+                    call.name,
+                )
+
+            return result
+
+        _resilient_process_model_response._resilience_patched = True
+        _tr.process_model_response = _resilient_process_model_response
+        _patch_applied = True
+
+
+# Apply tool resilience patch at import time
+_patch_tool_resilience()
 
 
 class RichLoggingHooks(RunHooksBase):

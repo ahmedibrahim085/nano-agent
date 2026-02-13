@@ -7,9 +7,10 @@ Tests the tools that the OpenAI Agent SDK agent uses during execution.
 import pytest
 import tempfile
 import os
+import asyncio
 from pathlib import Path
 from datetime import datetime
-from unittest.mock import patch, mock_open
+from unittest.mock import patch, mock_open, AsyncMock, MagicMock
 
 from nano_agent.modules.nano_agent_tools import (
     _read_file_impl,
@@ -515,3 +516,100 @@ class TestRunTests:
         set_workspace(str(tmp_path))
         result = await _raw_run_tests("/etc", "pytest")
         assert "Error" in result
+
+    @pytest.mark.asyncio
+    async def test_run_tests_npm_execution(self, tmp_path):
+        """Run tests with npm framework via package.json auto-detection."""
+        set_workspace(str(tmp_path))
+        (tmp_path / "package.json").write_text('{"scripts": {"test": "jest"}}')
+
+        mock_proc = MagicMock()
+        mock_proc.communicate = AsyncMock(
+            return_value=(b"Tests: 5 passed, 0 failed\n", b"")
+        )
+        mock_proc.returncode = 0
+
+        with patch(
+            "asyncio.create_subprocess_shell",
+            AsyncMock(return_value=mock_proc),
+        ) as mock_create:
+            result = await _raw_run_tests(".", "auto")
+
+        # Verify npm command was built from FRAMEWORK_COMMANDS constant
+        call_args = mock_create.call_args
+        assert call_args.args[0] == FRAMEWORK_COMMANDS["npm"]
+        # Verify CWD is workspace
+        assert call_args.kwargs["cwd"] == str(tmp_path)
+        # Verify output assembly
+        assert "Tests: 5 passed" in result
+        assert "[exit_code: 0]" in result
+
+    @pytest.mark.asyncio
+    async def test_run_tests_timeout_kills_process(self, tmp_path):
+        """Verify timeout: process killed, cleanup communicate called, error returned."""
+        set_workspace(str(tmp_path))
+
+        # Mock subprocess with communicate() that hangs forever
+        mock_proc = MagicMock()
+        communicate_calls = 0
+        first_call_cancelled = False
+
+        async def fake_communicate():
+            nonlocal communicate_calls, first_call_cancelled
+            communicate_calls += 1
+            if communicate_calls == 1:
+                try:
+                    # First call: wrapped by wait_for, will be cancelled on timeout
+                    await asyncio.sleep(999)
+                    return (b"", b"")  # Never reached
+                except asyncio.CancelledError:
+                    first_call_cancelled = True
+                    raise  # Re-raise so wait_for converts to TimeoutError
+            # Second call: post-kill cleanup (line 900), returns immediately
+            return (b"", b"")
+
+        mock_proc.communicate = fake_communicate
+        mock_proc.kill = MagicMock()
+        mock_proc.returncode = -9
+
+        test_timeout = 0.01
+        with patch(
+            "asyncio.create_subprocess_shell",
+            AsyncMock(return_value=mock_proc),
+        ), patch(
+            "nano_agent.modules.nano_agent_tools.COMMAND_TIMEOUT_SECONDS",
+            test_timeout,
+        ):
+            result = await _raw_run_tests(".", "pytest")
+
+        # First communicate() was properly cancelled by wait_for
+        assert first_call_cancelled, "First communicate() should have been cancelled"
+        # Process was killed on timeout
+        mock_proc.kill.assert_called_once()
+        # Cleanup communicate() was called after kill (line 900)
+        assert communicate_calls == 2, f"Expected 2 communicate() calls, got {communicate_calls}"
+        # Error message returned with correct timeout value
+        assert "Error" in result
+        assert f"timed out after {test_timeout}s" in result
+
+    @pytest.mark.asyncio
+    async def test_run_tests_specific_file_target(self, tmp_path):
+        """Run tests targeting a specific file; other test files must not execute."""
+        set_workspace(str(tmp_path))
+        (tmp_path / "conftest.py").write_text("")
+        (tmp_path / "test_pass.py").write_text(
+            "def test_ok():\n    assert 1 + 1 == 2\n"
+        )
+        (tmp_path / "test_fail.py").write_text(
+            "def test_bad():\n    assert False, 'THIS_SHOULD_NOT_RUN'\n"
+        )
+
+        # Target ONLY the passing file
+        result = await _raw_run_tests(str(tmp_path / "test_pass.py"), "auto")
+
+        # Positive: targeted file ran and passed
+        assert "1 passed" in result
+        assert "exit_code: 0" in result
+        # Negative: failing file did NOT run
+        assert "failed" not in result.lower()
+        assert "THIS_SHOULD_NOT_RUN" not in result

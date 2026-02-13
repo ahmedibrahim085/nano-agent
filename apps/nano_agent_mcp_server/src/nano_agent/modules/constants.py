@@ -47,6 +47,7 @@ MODEL_INFO = {
     # LM Studio
     "qwen/qwen3-coder-next": "Qwen3 Coder Next 80B (3B active) - MoE coding model via LM Studio",
     # Z.ai
+    "glm-5": "GLM-5 - Z.ai frontier reasoning model (744B MoE)",
     "glm-4.7": "GLM-4.7 - Z.ai flagship reasoning model",
     "glm-4.5-air": "GLM-4.5 Air - Z.ai fast model",
     # Qwen Cloud
@@ -65,7 +66,7 @@ PROVIDER_REQUIREMENTS = {
 
 # Z.ai Configuration
 ZAI_BASE_URL = "https://api.z.ai/api/anthropic"
-ZAI_AVAILABLE_MODELS = ["glm-4.7", "glm-4.5-air"]
+ZAI_AVAILABLE_MODELS = ["glm-5", "glm-4.7", "glm-4.5-air"]
 
 # Qwen Cloud Configuration
 QWEN_BASE_URL = "https://portal.qwen.ai/v1"
@@ -136,6 +137,15 @@ MODEL_CAPABILITIES: dict[str, ModelCapability] = {
         },
     ),
     # Z.ai
+    "glm-5": ModelCapability(
+        temperature=1.0,
+        max_tokens=131072,
+        top_p=0.95,
+        extra_body={
+            "thinking": {"type": "enabled"},
+            "allowed_openai_params": ["thinking"],
+        },
+    ),
     "glm-4.7": ModelCapability(
         temperature=1.0,
         max_tokens=131072,

@@ -1,11 +1,11 @@
 """
 Tests for Qwen Cloud OAuth token management (qwen_auth module).
 
-25 tests covering:
+26 tests covering:
 - Happy path (6 tests)
 - Negative scenarios (11 tests)
 - Edge cases (3 tests)
-- Robustness (5 tests)
+- Robustness (6 tests)
 """
 
 import json
@@ -251,7 +251,7 @@ class TestEdgeCases:
         assert is_token_expired(creds) is True
 
 
-# --- Robustness Tests (21-25) ---
+# --- Robustness Tests (21-26) ---
 
 
 class TestRobustness:
@@ -297,3 +297,31 @@ class TestRobustness:
         with patch("nano_agent.modules.qwen_auth.refresh_token", side_effect=QwenAuthError("refresh failed")):
             with pytest.raises(QwenAuthError, match="refresh failed"):
                 get_valid_token(creds_path=creds_file)
+
+    def test_refresh_token_url_encodes_body(self, valid_creds):
+        """Test 26: Refresh token with special chars is URL-encoded in POST body."""
+        from urllib.parse import parse_qs
+
+        valid_creds["refresh_token"] = "token+with&special=chars"
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps({
+            "access_token": "new_token",
+            "refresh_token": "new_refresh",
+            "expires_in": 21600,
+        })
+        mock_result.stderr = ""
+
+        with patch("shutil.which", return_value="/usr/bin/curl"):
+            with patch("subprocess.run", return_value=mock_result) as mock_run:
+                refresh_token(valid_creds)
+
+        # Extract the -d body argument from the curl command
+        call_args = mock_run.call_args[0][0]
+        body_arg = call_args[call_args.index("-d") + 1]
+
+        # Parse the body back — if properly encoded, parse_qs will recover original values
+        parsed = parse_qs(body_arg)
+        assert parsed["refresh_token"] == ["token+with&special=chars"]
+        assert parsed["grant_type"] == ["refresh_token"]

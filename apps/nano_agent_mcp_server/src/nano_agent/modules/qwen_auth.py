@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
+from urllib.parse import urlencode
 
 logger = logging.getLogger(__name__)
 
@@ -117,11 +118,11 @@ def refresh_token(
     if shutil.which("curl") is None:
         raise QwenAuthError("curl not found — required for Qwen token refresh")
 
-    body = (
-        f"grant_type=refresh_token"
-        f"&client_id={client_id}"
-        f"&refresh_token={creds['refresh_token']}"
-    )
+    body = urlencode({
+        "grant_type": "refresh_token",
+        "client_id": client_id,
+        "refresh_token": creds["refresh_token"],
+    })
 
     try:
         result = subprocess.run(

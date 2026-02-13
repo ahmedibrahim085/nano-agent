@@ -17,7 +17,9 @@ from nano_agent.modules.nano_agent_tools import (
     read_file_raw,
     write_file_raw,
     list_files,
-    get_file_metadata
+    get_file_metadata,
+    search_files_raw,
+    set_workspace
 )
 from nano_agent.modules.data_types import (
     ReadFileRequest,
@@ -324,3 +326,65 @@ class TestUtilityFunctions:
         """Test getting info for a directory."""
         info = get_file_metadata(str(tmp_path))
         assert info is None
+
+
+class TestSearchFiles:
+    """Test the search_files tool."""
+
+    def test_search_files_basic_pattern(self, tmp_path):
+        """Test finding a known string in files."""
+        set_workspace(str(tmp_path))
+        (tmp_path / "hello.txt").write_text("Hello World\nGoodbye World\n")
+        (tmp_path / "other.txt").write_text("Nothing here\n")
+        result = search_files_raw("Hello", str(tmp_path))
+        assert "hello.txt" in result
+        assert "Hello World" in result
+        assert "other.txt" not in result
+
+    def test_search_files_regex_pattern(self, tmp_path):
+        """Test regex pattern search."""
+        set_workspace(str(tmp_path))
+        (tmp_path / "code.py").write_text("def foo():\n    return 42\ndef bar():\n    pass\n")
+        result = search_files_raw("def [a-z]+\\(\\)", str(tmp_path))
+        assert "def foo()" in result
+        assert "def bar()" in result
+
+    def test_search_files_with_glob(self, tmp_path):
+        """Test file glob filtering."""
+        set_workspace(str(tmp_path))
+        (tmp_path / "code.py").write_text("pattern_match\n")
+        (tmp_path / "readme.txt").write_text("pattern_match\n")
+        result = search_files_raw("pattern_match", str(tmp_path), file_glob="*.py")
+        assert "code.py" in result
+        assert "readme.txt" not in result
+
+    def test_search_files_no_matches(self, tmp_path):
+        """Test when no matches found."""
+        set_workspace(str(tmp_path))
+        (tmp_path / "file.txt").write_text("nothing relevant\n")
+        result = search_files_raw("NONEXISTENT_STRING_XYZ", str(tmp_path))
+        assert result == "No matches found"
+
+    def test_search_files_nonexistent_directory(self, tmp_path):
+        """Test with non-existent directory."""
+        set_workspace(str(tmp_path))
+        result = search_files_raw("pattern", str(tmp_path / "nonexistent"))
+        assert "Error" in result
+
+    def test_search_files_output_truncation(self, tmp_path):
+        """Test that large output is truncated."""
+        set_workspace(str(tmp_path))
+        # Create a file with many matching lines
+        content = "\n".join([f"match_line_{i}" for i in range(10000)])
+        (tmp_path / "large.txt").write_text(content)
+        result = search_files_raw("match_line_", str(tmp_path))
+        # Result should be truncated to BASH_OUTPUT_MAX_CHARS
+        assert len(result) <= 35000  # some margin above 30000
+
+    def test_search_files_default_directory(self, tmp_path):
+        """Test that directory='.' uses workspace."""
+        set_workspace(str(tmp_path))
+        (tmp_path / "target.txt").write_text("unique_search_term\n")
+        result = search_files_raw("unique_search_term")
+        assert "target.txt" in result
+        assert "unique_search_term" in result

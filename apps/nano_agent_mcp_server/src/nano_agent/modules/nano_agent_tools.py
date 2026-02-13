@@ -14,6 +14,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, Any
 import json
+import subprocess
 
 # Import function_tool decorator from agents SDK
 try:
@@ -720,6 +721,69 @@ async def bash(command: str) -> str:
 
     except Exception as e:
         return f"Error executing command: {str(e)}"
+
+
+def search_files_raw(pattern: str, directory: str = ".", file_glob: str = "*") -> str:
+    """
+    Search for a pattern in files recursively using grep.
+
+    Args:
+        pattern: Text or regex pattern to search for
+        directory: Directory to search in (default: workspace root)
+        file_glob: File glob pattern to filter (e.g., "*.py", "*.js")
+
+    Returns:
+        Matching lines with file paths and line numbers, or error/no-match message
+    """
+    workspace = get_workspace()
+    if directory == ".":
+        search_dir = workspace
+    else:
+        search_dir = resolve_path(directory)
+
+    if not search_dir.exists():
+        return f"Error: Directory not found: {directory}"
+    if not search_dir.is_dir():
+        return f"Error: Not a directory: {directory}"
+
+    cmd = [
+        "grep", "-rn", "-E",
+        "--include", file_glob,
+        "--binary-files=without-match",
+        pattern,
+        str(search_dir),
+    ]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=COMMAND_TIMEOUT_SECONDS
+        )
+        if result.returncode == 1:  # grep returns 1 for no matches
+            return "No matches found"
+        if result.returncode != 0:
+            return f"Error: {result.stderr.strip()}"
+        output = result.stdout.strip()
+        if len(output) > BASH_OUTPUT_MAX_CHARS:
+            head = int(BASH_OUTPUT_MAX_CHARS * BASH_OUTPUT_HEAD_RATIO)
+            tail = int(BASH_OUTPUT_MAX_CHARS * BASH_OUTPUT_TAIL_RATIO)
+            output = output[:head] + "\n...(truncated)...\n" + output[-tail:]
+        return output
+    except subprocess.TimeoutExpired:
+        return f"Error: Search timed out after {COMMAND_TIMEOUT_SECONDS}s"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+
+@function_tool
+def search_files(pattern: str, directory: str = ".", file_glob: str = "*") -> str:
+    """Search for a pattern in files recursively. Returns matching lines with file paths and line numbers.
+
+    Args:
+        pattern: Text or regex pattern to search for
+        directory: Directory to search in (default: workspace root)
+        file_glob: File glob pattern to filter (e.g., "*.py", "*.js")
+    """
+    capture_args("search_files", pattern=pattern, directory=directory, file_glob=file_glob)
+    return search_files_raw(pattern, directory, file_glob)
 
 
 # Export all tools for the agent

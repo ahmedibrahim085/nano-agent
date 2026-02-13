@@ -2,7 +2,7 @@
 Provider Configuration for Multi-Model Support.
 
 This module provides a thin abstraction layer for creating agents
-with different model providers (OpenAI, Anthropic, Ollama).
+with different model providers (OpenAI, Anthropic, Ollama, LM Studio, Z.ai, Qwen).
 """
 
 from typing import Optional, Union

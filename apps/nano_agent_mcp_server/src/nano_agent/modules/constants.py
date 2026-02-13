@@ -141,6 +141,10 @@ MODEL_CAPABILITIES: dict[str, ModelCapability] = {
         temperature=1.0,
         max_tokens=131072,
         top_p=0.95,
+        extra_body={
+            "thinking": {"type": "enabled"},
+            "allowed_openai_params": ["thinking"],
+        },
     ),
     "glm-4.7": ModelCapability(
         temperature=1.0,

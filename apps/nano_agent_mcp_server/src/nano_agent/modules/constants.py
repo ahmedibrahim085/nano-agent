@@ -72,7 +72,7 @@ QWEN_BASE_URL = "https://portal.qwen.ai/v1"
 QWEN_AVAILABLE_MODELS = ["coder-model"]
 
 # Agent Configuration
-MAX_AGENT_TURNS = 20  # Maximum turns in agent loop
+MAX_AGENT_TURNS = 50  # Maximum turns in agent loop
 
 # Per-model capabilities registry
 

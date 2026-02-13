@@ -1,11 +1,11 @@
 """
 Tests for Qwen Cloud OAuth token management (qwen_auth module).
 
-26 tests covering:
+29 tests covering:
 - Happy path (6 tests)
-- Negative scenarios (11 tests)
-- Edge cases (3 tests)
-- Robustness (6 tests)
+- Negative scenarios (12 tests)
+- Edge cases (4 tests)
+- Robustness (7 tests)
 """
 
 import json
@@ -26,6 +26,7 @@ from nano_agent.modules.qwen_auth import (
 
 
 # --- Fixtures ---
+
 
 @pytest.fixture
 def valid_creds():
@@ -119,7 +120,9 @@ class TestHappyPath:
             "expiry_date": int(time.time() * 1000) + 3600000,
         }
 
-        with patch("nano_agent.modules.qwen_auth.refresh_token", return_value=new_creds):
+        with patch(
+            "nano_agent.modules.qwen_auth.refresh_token", return_value=new_creds
+        ):
             with patch("nano_agent.modules.qwen_auth.save_credentials") as mock_save:
                 token = get_valid_token(creds_path=creds_file)
 
@@ -154,35 +157,45 @@ class TestNegativeScenarios:
     def test_read_credentials_null_access_token(self, tmp_path):
         """Test 10: access_token=null passes key check but should fail type validation."""
         creds_file = tmp_path / "creds.json"
-        creds_file.write_text(json.dumps({"access_token": None, "refresh_token": "valid"}))
+        creds_file.write_text(
+            json.dumps({"access_token": None, "refresh_token": "valid"})
+        )
         with pytest.raises(QwenAuthError, match="invalid"):
             read_qwen_credentials(creds_path=creds_file)
 
     def test_read_credentials_empty_access_token(self, tmp_path):
         """Test 11: access_token="" passes key check but should fail empty validation."""
         creds_file = tmp_path / "creds.json"
-        creds_file.write_text(json.dumps({"access_token": "", "refresh_token": "valid"}))
+        creds_file.write_text(
+            json.dumps({"access_token": "", "refresh_token": "valid"})
+        )
         with pytest.raises(QwenAuthError, match="invalid"):
             read_qwen_credentials(creds_path=creds_file)
 
     def test_read_credentials_integer_access_token(self, tmp_path):
         """Test 12: access_token=123 passes key check but should fail type validation."""
         creds_file = tmp_path / "creds.json"
-        creds_file.write_text(json.dumps({"access_token": 123, "refresh_token": "valid"}))
+        creds_file.write_text(
+            json.dumps({"access_token": 123, "refresh_token": "valid"})
+        )
         with pytest.raises(QwenAuthError, match="invalid"):
             read_qwen_credentials(creds_path=creds_file)
 
     def test_read_credentials_null_refresh_token(self, tmp_path):
         """Test 13: refresh_token=null passes key check but should fail type validation."""
         creds_file = tmp_path / "creds.json"
-        creds_file.write_text(json.dumps({"access_token": "valid", "refresh_token": None}))
+        creds_file.write_text(
+            json.dumps({"access_token": "valid", "refresh_token": None})
+        )
         with pytest.raises(QwenAuthError, match="invalid"):
             read_qwen_credentials(creds_path=creds_file)
 
     def test_read_credentials_empty_refresh_token(self, tmp_path):
         """Test 14: refresh_token="" passes key check but should fail empty validation."""
         creds_file = tmp_path / "creds.json"
-        creds_file.write_text(json.dumps({"access_token": "valid", "refresh_token": ""}))
+        creds_file.write_text(
+            json.dumps({"access_token": "valid", "refresh_token": ""})
+        )
         with pytest.raises(QwenAuthError, match="invalid"):
             read_qwen_credentials(creds_path=creds_file)
 
@@ -222,13 +235,32 @@ class TestNegativeScenarios:
                 with pytest.raises(QwenAuthError):
                     refresh_token(valid_creds)
 
+    def test_refresh_token_oauth_error_response(self, valid_creds):
+        """Test 18: OAuth error response includes error_description in exception."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps(
+            {
+                "error": "invalid_grant",
+                "error_description": "refresh token has been revoked",
+            }
+        )
+        mock_result.stderr = ""
 
-# --- Edge Case Tests (18-20) ---
+        with patch("shutil.which", return_value="/usr/bin/curl"):
+            with patch("subprocess.run", return_value=mock_result):
+                with pytest.raises(
+                    QwenAuthError, match="refresh token has been revoked"
+                ):
+                    refresh_token(valid_creds)
+
+
+# --- Edge Case Tests (19-22) ---
 
 
 class TestEdgeCases:
     def test_is_token_expired_expired(self):
-        """Test 18: Token with expiry_date 1 hour ago IS expired."""
+        """Test 19: Token with expiry_date 1 hour ago IS expired."""
         creds = {
             "access_token": "tok",
             "refresh_token": "ref",
@@ -237,7 +269,7 @@ class TestEdgeCases:
         assert is_token_expired(creds) is True
 
     def test_is_token_expired_within_buffer(self):
-        """Test 19: Token expiring in 3 min (inside 5-min buffer) IS expired."""
+        """Test 20: Token expiring in 3 min (inside 5-min buffer) IS expired."""
         creds = {
             "access_token": "tok",
             "refresh_token": "ref",
@@ -246,37 +278,64 @@ class TestEdgeCases:
         assert is_token_expired(creds) is True
 
     def test_is_token_expired_missing_expiry(self):
-        """Test 20: No expiry_date key means expired (safe default)."""
+        """Test 21: No expiry_date key means expired (safe default)."""
         creds = {"access_token": "tok", "refresh_token": "ref"}
         assert is_token_expired(creds) is True
 
+    def test_refresh_token_missing_expires_in_warns(self, valid_creds):
+        """Test 22: Missing expires_in logs warning and defaults to 21600s."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps(
+            {
+                "access_token": "new_token",
+                "refresh_token": "new_refresh",
+                # Note: no expires_in field
+            }
+        )
+        mock_result.stderr = ""
 
-# --- Robustness Tests (21-26) ---
+        with patch("shutil.which", return_value="/usr/bin/curl"):
+            with patch("subprocess.run", return_value=mock_result):
+                with patch("nano_agent.modules.qwen_auth.logger") as mock_logger:
+                    result = refresh_token(valid_creds)
+
+        # Should still compute expiry_date with default
+        assert "expiry_date" in result
+        # Should have logged a warning
+        mock_logger.warning.assert_called_once()
+        assert "expires_in" in str(mock_logger.warning.call_args)
+
+
+# --- Robustness Tests (23-29) ---
 
 
 class TestRobustness:
     def test_refresh_token_timeout(self, valid_creds):
-        """Test 21: subprocess.TimeoutExpired raises QwenAuthError with 'timed out'."""
+        """Test 23: subprocess.TimeoutExpired raises QwenAuthError with 'timed out'."""
         with patch("shutil.which", return_value="/usr/bin/curl"):
-            with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="curl", timeout=15)):
+            with patch(
+                "subprocess.run",
+                side_effect=subprocess.TimeoutExpired(cmd="curl", timeout=15),
+            ):
                 with pytest.raises(QwenAuthError, match="timed out"):
                     refresh_token(valid_creds)
 
     def test_refresh_token_curl_not_found(self, valid_creds):
-        """Test 22: shutil.which returns None raises QwenAuthError with 'curl not found'."""
+        """Test 24: shutil.which returns None raises QwenAuthError with 'curl not found'."""
         with patch("shutil.which", return_value=None):
             with pytest.raises(QwenAuthError, match="curl not found"):
                 refresh_token(valid_creds)
 
     def test_read_credentials_missing_refresh_token(self, tmp_path):
-        """Test 23: JSON with access_token but no refresh_token raises QwenAuthError."""
+        """Test 25: JSON with access_token but no refresh_token raises QwenAuthError."""
         creds_file = tmp_path / "creds.json"
         creds_file.write_text(json.dumps({"access_token": "tok"}))
         with pytest.raises(QwenAuthError, match="missing refresh_token"):
             read_qwen_credentials(creds_path=creds_file)
 
     def test_save_credentials_atomic_write(self, valid_creds, tmp_path):
-        """Test 24: Verify writes to .tmp first, then os.rename called."""
+        """Test 26: Verify writes to .tmp first, then os.rename called."""
         creds_file = tmp_path / "oauth_creds.json"
 
         with patch("os.rename") as mock_rename:
@@ -289,28 +348,47 @@ class TestRobustness:
         assert str(args[0]).endswith(".tmp")
         assert str(args[1]) == str(creds_file)
 
+    def test_save_credentials_cleans_tmp_on_failure(self, tmp_path):
+        """Test 27: .tmp file is cleaned up if os.rename fails."""
+        creds_file = tmp_path / "oauth_creds.json"
+        tmp_file = creds_file.with_suffix(".tmp")
+
+        with patch("os.rename", side_effect=OSError("permission denied")):
+            with pytest.raises(OSError):
+                save_credentials(
+                    {"access_token": "a", "refresh_token": "r"}, creds_path=creds_file
+                )
+
+        # The .tmp file should have been cleaned up
+        assert not tmp_file.exists()
+
     def test_get_valid_token_refresh_fails_raises(self, expired_creds, tmp_path):
-        """Test 25: QwenAuthError from refresh_token propagates up."""
+        """Test 28: QwenAuthError from refresh_token propagates up."""
         creds_file = tmp_path / "oauth_creds.json"
         creds_file.write_text(json.dumps(expired_creds))
 
-        with patch("nano_agent.modules.qwen_auth.refresh_token", side_effect=QwenAuthError("refresh failed")):
+        with patch(
+            "nano_agent.modules.qwen_auth.refresh_token",
+            side_effect=QwenAuthError("refresh failed"),
+        ):
             with pytest.raises(QwenAuthError, match="refresh failed"):
                 get_valid_token(creds_path=creds_file)
 
     def test_refresh_token_url_encodes_body(self, valid_creds):
-        """Test 26: Refresh token with special chars is URL-encoded in POST body."""
+        """Test 29: Refresh token with special chars is URL-encoded in POST body."""
         from urllib.parse import parse_qs
 
         valid_creds["refresh_token"] = "token+with&special=chars"
 
         mock_result = MagicMock()
         mock_result.returncode = 0
-        mock_result.stdout = json.dumps({
-            "access_token": "new_token",
-            "refresh_token": "new_refresh",
-            "expires_in": 21600,
-        })
+        mock_result.stdout = json.dumps(
+            {
+                "access_token": "new_token",
+                "refresh_token": "new_refresh",
+                "expires_in": 21600,
+            }
+        )
         mock_result.stderr = ""
 
         with patch("shutil.which", return_value="/usr/bin/curl"):

@@ -26,6 +26,7 @@ EXPIRY_BUFFER_MS = 5 * 60 * 1000  # 5-minute safety buffer
 
 class QwenAuthError(Exception):
     """Raised when Qwen OAuth authentication fails."""
+
     pass
 
 
@@ -60,7 +61,10 @@ def read_qwen_credentials(creds_path: Path = QWEN_CREDS_PATH) -> dict:
 
     if "refresh_token" not in creds:
         raise QwenAuthError("Qwen credentials missing refresh_token")
-    if not isinstance(creds["refresh_token"], str) or not creds["refresh_token"].strip():
+    if (
+        not isinstance(creds["refresh_token"], str)
+        or not creds["refresh_token"].strip()
+    ):
         raise QwenAuthError(
             f"Qwen credentials refresh_token is invalid "
             f"(type={type(creds['refresh_token']).__name__})"
@@ -89,7 +93,10 @@ def is_token_expired(creds: dict, buffer_ms: int = EXPIRY_BUFFER_MS) -> bool:
     is_expired = now_ms >= (expiry_date - buffer_ms)
     logger.debug(
         "Token expiry check: now=%d, expiry=%d, buffer=%d, expired=%s",
-        now_ms, expiry_date, buffer_ms, is_expired,
+        now_ms,
+        expiry_date,
+        buffer_ms,
+        is_expired,
     )
     return is_expired
 
@@ -118,18 +125,26 @@ def refresh_token(
     if shutil.which("curl") is None:
         raise QwenAuthError("curl not found — required for Qwen token refresh")
 
-    body = urlencode({
-        "grant_type": "refresh_token",
-        "client_id": client_id,
-        "refresh_token": creds["refresh_token"],
-    })
+    body = urlencode(
+        {
+            "grant_type": "refresh_token",
+            "client_id": client_id,
+            "refresh_token": creds["refresh_token"],
+        }
+    )
 
     try:
         result = subprocess.run(
             [
-                "curl", "-s", "-X", "POST", refresh_url,
-                "-H", "Content-Type: application/x-www-form-urlencoded",
-                "-d", body,
+                "curl",
+                "-s",
+                "-X",
+                "POST",
+                refresh_url,
+                "-H",
+                "Content-Type: application/x-www-form-urlencoded",
+                "-d",
+                body,
             ],
             capture_output=True,
             text=True,
@@ -140,7 +155,9 @@ def refresh_token(
 
     if result.returncode != 0:
         logger.error("curl failed (rc=%d): %s", result.returncode, result.stderr)
-        raise QwenAuthError(f"curl failed with exit code {result.returncode}: {result.stderr}")
+        raise QwenAuthError(
+            f"curl failed with exit code {result.returncode}: {result.stderr}"
+        )
 
     try:
         data = json.loads(result.stdout)
@@ -148,11 +165,22 @@ def refresh_token(
         logger.error("Non-JSON response from refresh endpoint: %s", result.stdout[:200])
         raise QwenAuthError("Qwen token refresh returned non-JSON response")
 
+    # Check for OAuth error response first
+    if "error" in data:
+        error_desc = data.get("error_description", data["error"])
+        raise QwenAuthError(f"Qwen token refresh failed: {error_desc}")
+
     if "access_token" not in data:
         raise QwenAuthError(f"Qwen token refresh response missing access_token: {data}")
 
     # Compute expiry_date from expires_in (seconds → milliseconds)
-    expires_in = data.get("expires_in", 21600)  # Default 6 hours
+    expires_in = data.get("expires_in")
+    if expires_in is None:
+        expires_in = 21600
+        logger.warning(
+            "Token refresh response missing expires_in — defaulting to %ds", expires_in
+        )
+
     data["expiry_date"] = int(time.time() * 1000) + expires_in * 1000
 
     logger.debug("Token refreshed, new expiry in %ds", expires_in)
@@ -170,10 +198,16 @@ def save_credentials(creds: dict, creds_path: Path = QWEN_CREDS_PATH) -> None:
         creds_path: Target file path.
     """
     tmp_path = creds_path.with_suffix(".tmp")
-    with open(tmp_path, "w") as f:
-        json.dump(creds, f, indent=2)
-    os.rename(str(tmp_path), str(creds_path))
-    logger.debug("Saved credentials to %s (atomic write)", creds_path)
+    try:
+        with open(tmp_path, "w") as f:
+            json.dump(creds, f, indent=2)
+        os.rename(str(tmp_path), str(creds_path))
+        logger.debug("Saved credentials to %s (atomic write)", creds_path)
+    except Exception:
+        # Clean up orphaned temp file on any failure
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise
 
 
 def get_valid_token(creds_path: Path = QWEN_CREDS_PATH) -> str:

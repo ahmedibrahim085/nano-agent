@@ -933,4 +933,6 @@ def get_nano_agent_tools():
         get_file_info,
         edit_file,
         bash,
+        search_files,
+        run_tests,
     ]

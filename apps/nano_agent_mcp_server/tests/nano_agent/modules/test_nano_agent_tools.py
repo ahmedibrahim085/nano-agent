@@ -334,6 +334,14 @@ class TestUtilityFunctions:
 class TestSearchFiles:
     """Test the search_files tool."""
 
+    @pytest.fixture(autouse=True)
+    def _reset_workspace(self):
+        """Reset workspace ContextVar after each test to avoid leaking state."""
+        yield
+        from nano_agent.modules.nano_agent_tools import _workspace_dir_var, _bash_cwd_var
+        _workspace_dir_var.set(None)
+        _bash_cwd_var.set(None)
+
     def test_search_files_basic_pattern(self, tmp_path):
         """Test finding a known string in files."""
         set_workspace(str(tmp_path))
@@ -395,6 +403,14 @@ class TestSearchFiles:
 
 class TestRunTests:
     """Test the run_tests tool."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_workspace(self):
+        """Reset workspace ContextVar after each test to avoid leaking state."""
+        yield
+        from nano_agent.modules.nano_agent_tools import _workspace_dir_var, _bash_cwd_var
+        _workspace_dir_var.set(None)
+        _bash_cwd_var.set(None)
 
     def test_detect_test_framework_pytest_conftest(self, tmp_path):
         """Detect pytest from conftest.py."""

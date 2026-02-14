@@ -4,6 +4,180 @@ Newest releases first. Each release separated by `---`.
 
 ---
 
+# Release: Bash Orphan Fix + bash_background Tool (Tier 1+3)
+
+**Branch**: `feat/bash-background`
+**Base**: `feat/git-tools`
+**Date**: 2026-02-14
+**Commits**: 5 | **Files changed**: 6 | **+736 / -52 lines**
+
+## Summary
+
+Fixes a critical orphan process bug in the `bash()` tool and adds a new `bash_background` tool (#13) for safe long-running background process execution.
+
+## What Changed
+
+### Tier 1: Orphan Process Fix
+
+**Problem**: When `bash()` commands timed out, `proc.kill()` only killed the shell PID. Child processes were reparented to PID 1 (init) — true orphans with no cleanup mechanism.
+
+**Solution**:
+- Added `start_new_session=True` to `create_subprocess_shell` — creates new process group via `setsid()`
+- Replaced `proc.kill()` with `_kill_process_tree()` using `os.killpg()` to kill the entire process group
+- Added `_HAS_PROCESS_GROUPS = hasattr(os, 'killpg')` platform guard for Windows compatibility
+
+### Tier 3: bash_background Tool
+
+New tool for running long-lived background processes safely:
+
+```
+bash_background(command) → PID + output file path
+```
+
+| Feature | Detail |
+|---------|--------|
+| Process isolation | `start_new_session=True` — own process group |
+| PID tracking | `ContextVar[Optional[list[int]]]` — per-agent isolation |
+| Output capture | `tempfile.mkstemp()` in workspace — readable via `read_file` |
+| Process limit | `MAX_BACKGROUND_PROCESSES=5` — dead procs auto-pruned |
+| Graceful cleanup | SIGTERM → 3s wait → SIGKILL on agent exit |
+| Crash recovery | `set_workspace()` kills leftover PIDs from crashed sessions |
+| Zombie reaping | `os.waitpid(pid, os.WNOHANG)` defense-in-depth |
+| Agent exit | `try/finally` + `asyncio.shield()` in `nano_agent.py` |
+
+### Constants Update
+
+- `TOOL_BASH_BACKGROUND = "bash_background"` constant
+- `AVAILABLE_TOOLS` updated from 12 → 13 items
+- `NANO_AGENT_SYSTEM_PROMPT` updated with bash_background docs and "13 tools" guidance
+
+## Design Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| `ContextVar` with `None` default | Mutable `[]` default would be shared across contexts |
+| Immediate SIGKILL on timeout | User already waited 120s — no grace period needed |
+| SIGTERM → 3s → SIGKILL on cleanup | Background processes may need graceful shutdown |
+| PID stored (not PGID) | `setsid()` makes pid == pgid, `os.killpg(pid)` works |
+| Output files in workspace | Agent needs `read_file` access; workspace is agent's sandbox |
+| `asyncio.shield()` in finally | Prevents CancelledError from aborting cleanup |
+
+## Reviews
+
+- Plan reviewed R1-R4 (self + Z.ai GLM-5 + Qwen-Next) — 6 valid findings addressed, 8 false positives rejected
+- Z.ai GLM-5 cross-review on final implementation — all findings already triaged
+
+## Test Coverage
+
+| Test File | Tests | What |
+|-----------|-------|------|
+| `test_bash_background.py` | 21 | Constants, execution, process management, context isolation, errors, edge cases, tool registration |
+| `test_bash_tool.py` | +4 | Process group flag, kill tree, dead process handling, session isolation |
+| `test_git_tools.py` | updated | Tool count assertions 12 → 13 |
+| **Total** | **25 new** | **79/79 targeted tests pass** |
+
+Full suite: 436/466 pass (30 pre-existing failures, zero new).
+
+## Commits
+
+| # | Hash | Message |
+|---|------|---------|
+| 1 | `ab5912b` | test: add RED tests for bash orphan fix and bash_background (Tier 1+3) |
+| 2 | `3a8800e` | feat: add bash_background constant and update system prompt (13 tools) |
+| 3 | `cac5ffe` | feat: add process-group isolation and bash_background tool (Tier 1+3) |
+| 4 | `14ab76f` | feat: add background process cleanup on agent exit (try/finally) |
+| 5 | `291b7b8` | test: fix bash_background test bugs and update tool count assertions |
+
+## Files Changed
+
+| File | Lines | What |
+|------|-------|------|
+| `nano_agent_tools.py` | +202 | `_kill_process_tree`, `_HAS_PROCESS_GROUPS`, `_bg_pids_var`, `bash_background()`, process helpers, `set_workspace()` crash recovery |
+| `constants.py` | +5/-1 | `TOOL_BASH_BACKGROUND`, AVAILABLE_TOOLS 12→13, system prompt |
+| `nano_agent.py` | +53/-47 | try/finally + asyncio.shield cleanup |
+| `test_bash_background.py` | +395 (new) | 21 tests across 7 classes |
+| `test_bash_tool.py` | +78 | 4 process group tests |
+| `test_git_tools.py` | +3/-3 | Tool count 12→13 |
+
+---
+
+# Release: Git-Aware Tools (US-008)
+
+**Branch**: `feat/git-tools`
+**Base**: `main`
+**Date**: 2026-02-14
+**Commits**: 1 | **Files changed**: 4 | **+615 / -7 lines**
+
+## Summary
+
+Adds 4 git-aware tools (tool #9-12) giving nano-agents safe git capabilities with comprehensive safety guards blocking destructive operations.
+
+## New Tools
+
+| Tool | Purpose | Example |
+|------|---------|---------|
+| `git_status()` | Working tree status | Branch, staged/unstaged changes |
+| `git_commit(message)` | Commit staged changes | Validates non-empty message |
+| `git_branch(name)` | Create + switch branch, or list all | Empty name = list |
+| `git_diff(ref)` | Show changes | No ref = unstaged+staged; with ref = diff against it |
+
+## Safety Guards
+
+All git operations pass through safety validation that blocks:
+
+| Blocked Operation | Pattern |
+|-------------------|---------|
+| Force push | `--force`, `-f`, `--force-with-lease` |
+| Hard reset | `reset --hard` |
+| Protected branch deletion | `main`, `master`, `develop` |
+| Clean all variants | `clean -fd`, `clean -fx`, etc. |
+| Discard all changes | `checkout .`, `restore .` |
+| Config alias injection | `config.*alias` |
+
+Feature branch deletion IS allowed (only protected branches blocked).
+
+Input validation:
+- Branch names and diff refs reject leading `-` to prevent flag injection
+- Git environment variables (`GIT_DIR`, `GIT_WORK_TREE`, etc.) cleared from subprocess
+- Large diffs truncated at 30K characters
+
+## Constants Update
+
+- 4 new tool constants: `TOOL_GIT_STATUS`, `TOOL_GIT_COMMIT`, `TOOL_GIT_BRANCH`, `TOOL_GIT_DIFF`
+- `AVAILABLE_TOOLS` updated from 8 → 12 items
+- `NANO_AGENT_SYSTEM_PROMPT` updated with git tool docs, usage guidance, and "12 tools" count
+
+## Test Coverage
+
+| Test Class | Tests | Coverage |
+|------------|-------|---------|
+| `TestGitConstants` | 3 | Constants, AVAILABLE_TOOLS, system prompt |
+| `TestGitStatus` | 2 | In-repo status, not-a-repo error |
+| `TestGitCommit` | 4 | Staged changes, empty message, whitespace message, nothing staged |
+| `TestGitBranch` | 3 | Create+switch, list (empty name), already exists |
+| `TestGitDiff` | 4 | Unstaged, staged, no changes, with ref |
+| `TestGitSafety` | 12 | Force push (3 variants), hard reset, branch delete (4 variants), clean, checkout ., restore ., config alias |
+| `TestGitInputValidation` | 3 | Branch name flag injection, diff ref injection, env var clearing |
+| `TestGitEdgeCases` | 3 | Empty repo, large diff truncation, not-a-repo |
+| **Total** | **35** | **All pass** |
+
+## Commits
+
+| # | Hash | Message |
+|---|------|---------|
+| 1 | `856d333` | feat: add 4 git-aware tools with safety guards (US-008) |
+
+## Files Changed
+
+| File | Lines | What |
+|------|-------|------|
+| `nano_agent_tools.py` | +376 | 4 git tool implementations + safety validation |
+| `constants.py` | +22/-4 | Git tool constants, AVAILABLE_TOOLS 8→12, system prompt |
+| `test_git_tools.py` | +396 (new) | 35 tests across 8 classes |
+| `nano_agent.py` | +2/-1 | Import alignment |
+
+---
+
 # Release: LM Studio Integration Upgrade
 
 **Branch**: `feat/better-support-local-llms-lmstudio`

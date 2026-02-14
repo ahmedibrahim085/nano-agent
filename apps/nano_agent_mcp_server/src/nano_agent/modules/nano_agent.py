@@ -52,7 +52,7 @@ from .constants import (
 )
 
 # Import tools from nano_agent_tools
-from .nano_agent_tools import get_nano_agent_tools, set_workspace
+from .nano_agent_tools import get_nano_agent_tools, set_workspace, _cleanup_background_processes
 
 # Import agent identity utilities
 from .agent_identity import read_agent_instructions, build_layered_prompt
@@ -511,53 +511,59 @@ async def _execute_nano_agent_async(request: PromptNanoAgentRequest, enable_rich
         token_tracker = TokenTracker(model=request.model, provider=request.provider) if enable_rich_logging else None
         hooks = RichLoggingHooks(token_tracker=token_tracker) if enable_rich_logging else None
         
-        # Run the agent asynchronously
-        result = await Runner.run(
-            agent,
-            request.agentic_prompt,
-            max_turns=MAX_AGENT_TURNS,
-            run_config=RunConfig(
-                workflow_name="nano_agent_task",
-                trace_metadata={
-                    "model": request.model,
-                    "provider": request.provider,
-                    "timestamp": datetime.now().isoformat(),
-                }
-            ),
-            hooks=hooks
-        )
-        
-        execution_time = time.time() - start_time
-        
-        # Extract the final output
-        final_output = result.final_output if hasattr(result, 'final_output') else str(result)
-        
-        # Check if result has usage information
-        if hasattr(result, 'usage') and token_tracker:
-            token_tracker.add_usage(
-                input_tokens=result.usage.get('prompt_tokens', 0),
-                output_tokens=result.usage.get('completion_tokens', 0)
+        try:
+            # Run the agent asynchronously
+            result = await Runner.run(
+                agent,
+                request.agentic_prompt,
+                max_turns=MAX_AGENT_TURNS,
+                run_config=RunConfig(
+                    workflow_name="nano_agent_task",
+                    trace_metadata={
+                        "model": request.model,
+                        "provider": request.provider,
+                        "timestamp": datetime.now().isoformat(),
+                    }
+                ),
+                hooks=hooks
             )
-        
-        # Prepare metadata
-        metadata = {
-            "model": request.model,
-            "provider": request.provider,
-            "turns": len(result.messages) if hasattr(result, 'messages') else 0,
-        }
-        
-        # Add token usage if available
-        if token_tracker:
-            metadata["token_usage"] = token_tracker.get_summary()
-        
-        logger.info(f"Agent completed successfully in {execution_time:.2f}s")
-        
-        return PromptNanoAgentResponse(
-            success=True,
-            result=final_output,
-            metadata=metadata,
-            execution_time_seconds=execution_time
-        )
+
+            execution_time = time.time() - start_time
+
+            # Extract the final output
+            final_output = result.final_output if hasattr(result, 'final_output') else str(result)
+
+            # Check if result has usage information
+            if hasattr(result, 'usage') and token_tracker:
+                token_tracker.add_usage(
+                    input_tokens=result.usage.get('prompt_tokens', 0),
+                    output_tokens=result.usage.get('completion_tokens', 0)
+                )
+
+            # Prepare metadata
+            metadata = {
+                "model": request.model,
+                "provider": request.provider,
+                "turns": len(result.messages) if hasattr(result, 'messages') else 0,
+            }
+
+            # Add token usage if available
+            if token_tracker:
+                metadata["token_usage"] = token_tracker.get_summary()
+
+            logger.info(f"Agent completed successfully in {execution_time:.2f}s")
+
+            return PromptNanoAgentResponse(
+                success=True,
+                result=final_output,
+                metadata=metadata,
+                execution_time_seconds=execution_time
+            )
+        finally:
+            try:
+                await asyncio.shield(_cleanup_background_processes())
+            except (asyncio.CancelledError, Exception):
+                logger.warning("Background process cleanup interrupted", exc_info=True)
         
     except Exception as e:
         import traceback

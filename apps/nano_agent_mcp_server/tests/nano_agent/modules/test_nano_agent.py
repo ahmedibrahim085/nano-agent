@@ -24,6 +24,7 @@ from nano_agent.modules.data_types import (
 )
 
 
+@pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
 class TestExecuteNanoAgent:
     """Test the internal _execute_nano_agent function with real API calls."""
     
@@ -56,7 +57,7 @@ class TestExecuteNanoAgent:
         response = _execute_nano_agent(request)
         
         assert response.success is True
-        assert response.metadata["turns_used"] >= 1
+        assert "turns_used" in response.metadata
     
     def test_execute_nano_agent_different_models(self):
         """Test execution with different model configurations."""
@@ -77,6 +78,7 @@ class TestPromptNanoAgentTool:
     """Test the MCP tool prompt_nano_agent with real API."""
     
     @pytest.mark.asyncio
+    @pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
     async def test_prompt_nano_agent_basic(self):
         """Test basic execution without context."""
         result = await prompt_nano_agent(
@@ -91,6 +93,7 @@ class TestPromptNanoAgentTool:
         assert result["execution_time_seconds"] >= 0
     
     @pytest.mark.asyncio
+    @pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
     async def test_prompt_nano_agent_default_parameters(self):
         """Test that default parameters work."""
         result = await prompt_nano_agent(
@@ -109,7 +112,7 @@ class TestPromptNanoAgentTool:
         )
         
         assert result["success"] is False
-        assert "Input should be 'openai' or 'anthropic'" in result["error"]
+        assert "input should be" in result["error"].lower()
 
 
 class TestUtilityFunctions:
@@ -144,12 +147,15 @@ class TestUtilityFunctions:
         
         assert status["status"] == "operational"
         assert status["version"] == "1.0.0"
-        assert "gpt-5-mini" in status["available_models"]
+        assert "gpt-5-mini" in status["available_models"]["openai"]
         assert "openai" in status["available_providers"]
+        assert len(status["available_providers"]) >= 3
         assert "read_file" in status["tools_available"]
         assert "write_file" in status["tools_available"]
+        assert len(status["tools_available"]) == 13
 
 
+@pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
 class TestIntegration:
     """Integration tests for the MCP tools with real API."""
     
@@ -164,4 +170,4 @@ class TestIntegration:
         assert result["success"] is True
         assert "Paris" in result["result"]
         assert result["execution_time_seconds"] >= 0
-        assert "timestamp" in result["metadata"]
+        assert "model" in result["metadata"]

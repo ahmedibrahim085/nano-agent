@@ -11,6 +11,7 @@ import sys
 import asyncio
 import json
 from pathlib import Path
+import pytest
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -57,6 +58,8 @@ def test_anthropic_cli():
         return False
 
 
+@pytest.mark.asyncio
+@pytest.mark.skipif(not os.getenv("ANTHROPIC_API_KEY"), reason="ANTHROPIC_API_KEY not set")
 async def test_anthropic_mcp():
     """Test Anthropic provider through MCP interface."""
     print("\n=== Testing Anthropic through MCP ===")

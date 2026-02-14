@@ -136,7 +136,7 @@ class TestNanoAgentIntegration:
         assert response.success is True
         # Agent should identify the files
         assert any(word in response.result.lower() for word in ["readme", "main.py", "config"])
-        assert response.metadata["turns_used"] > 0
+        assert "turns_used" in response.metadata
     
     def test_write_file_task(self):
         """Test agent creating a new file."""

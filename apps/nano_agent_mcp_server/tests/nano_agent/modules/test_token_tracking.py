@@ -40,18 +40,16 @@ class TestTokenTracker:
     def test_reset(self):
         """Test resetting the tracker."""
         tracker = TokenTracker()
-        
+
         # Add some usage
         usage = Usage(requests=1, input_tokens=100, output_tokens=50, total_tokens=150)
         tracker.update(usage)
-        tracker.track_tool("test_tool", 150)
-        
+
         # Reset
         tracker.reset()
-        
+
         assert tracker.total_usage.total_tokens == 0
         assert tracker.total_usage.requests == 0
-        assert len(tracker.tool_usage) == 0
     
     def test_update_usage(self):
         """Test updating usage from Usage object."""
@@ -74,45 +72,6 @@ class TestTokenTracker:
         assert tracker.total_usage.input_tokens == 300
         assert tracker.total_usage.output_tokens == 150
         assert tracker.total_usage.total_tokens == 450
-    
-    def test_track_tool(self):
-        """Test tracking tool-specific usage."""
-        tracker = TokenTracker()
-        
-        # Track first tool
-        tracker.track_tool("read_file", 100)
-        assert "read_file" in tracker.tool_usage
-        assert tracker.tool_usage["read_file"]["tokens"] == 100
-        assert tracker.tool_usage["read_file"]["calls"] == 1
-        
-        # Track same tool again
-        tracker.track_tool("read_file", 50)
-        assert tracker.tool_usage["read_file"]["tokens"] == 150
-        assert tracker.tool_usage["read_file"]["calls"] == 2
-        
-        # Track different tool
-        tracker.track_tool("write_file", 200)
-        assert "write_file" in tracker.tool_usage
-        assert tracker.tool_usage["write_file"]["tokens"] == 200
-        assert tracker.tool_usage["write_file"]["calls"] == 1
-    
-    def test_checkpoint(self):
-        """Test checkpoint functionality."""
-        tracker = TokenTracker()
-        
-        # Initial usage
-        usage1 = Usage(total_tokens=100)
-        tokens_since = tracker.checkpoint(usage1)
-        assert tokens_since == 100
-        
-        # More usage
-        usage2 = Usage(total_tokens=250)
-        tokens_since = tracker.checkpoint(usage2)
-        assert tokens_since == 150  # 250 - 100
-        
-        # No change
-        tokens_since = tracker.checkpoint(usage2)
-        assert tokens_since == 0
     
     def test_calculate_cost_gpt5(self):
         """Test cost calculation for GPT-5 models."""
@@ -199,13 +158,10 @@ class TestTokenTracker:
             total_tokens=150_000
         )
         tracker.update(usage)
-        tracker.track_tool("read_file", 30_000)
-        tracker.track_tool("write_file", 20_000)
-        tracker.track_tool("read_file", 15_000)
-        
+
         # Generate report
         report = tracker.generate_report()
-        
+
         assert report.total_requests == 5
         assert report.total_input_tokens == 100_000
         assert report.total_output_tokens == 50_000
@@ -214,18 +170,13 @@ class TestTokenTracker:
         assert report.reasoning_tokens == 5_000
         assert report.model == "gpt-5-mini"
         assert report.provider == "openai"
-        
-        # Check tool usage
-        assert "read_file" in report.tool_usage
-        assert report.tool_usage["read_file"]["tokens"] == 45_000
-        assert report.tool_usage["read_file"]["calls"] == 2
-        assert report.tool_usage["write_file"]["tokens"] == 20_000
-        assert report.tool_usage["write_file"]["calls"] == 1
-        
+
         # Check costs (GPT-5-mini: $0.25/$2 per 1M)
+        # Output: (50K output + 5K reasoning) × $2/1M = $0.11
+        # Cached savings: 20K × ($0.25 - $0.125) / 1M = $0.0025
         assert report.input_cost == pytest.approx(0.025)
-        assert report.output_cost == pytest.approx(0.10)
-        assert report.total_cost == pytest.approx(0.1225)  # With cached savings
+        assert report.output_cost == pytest.approx(0.11)
+        assert report.total_cost == pytest.approx(0.1325)  # 0.025 + 0.11 - 0.0025
     
     def test_report_to_dict(self):
         """Test converting report to dictionary."""
@@ -245,17 +196,15 @@ class TestTokenTracker:
             start_time=datetime.now(),
             end_time=datetime.now() + timedelta(seconds=30),
             duration_seconds=30.0,
-            tool_usage={"read_file": {"tokens": 50_000, "calls": 5}}
         )
-        
+
         report_dict = report.to_dict()
-        
+
         assert report_dict["token_counts"]["requests"] == 10
         assert report_dict["token_counts"]["total_tokens"] == 150_000
         assert report_dict["costs"]["total_cost"] == 0.12
         assert report_dict["metadata"]["model"] == "gpt-5-mini"
         assert report_dict["metadata"]["duration_seconds"] == 30.0
-        assert "read_file" in report_dict["tool_usage"]
     
     def test_report_format_summary(self):
         """Test formatting human-readable summary."""
@@ -273,17 +222,15 @@ class TestTokenTracker:
             model="gpt-5-mini",
             provider="openai",
             duration_seconds=30.5,
-            tool_usage={"read_file": {"tokens": 50_000, "calls": 5}}
         )
-        
+
         summary = report.format_summary()
-        
+
         assert "Token Usage Report" in summary
         assert "Model: openai/gpt-5-mini" in summary
         assert "Duration: 30.50s" in summary
         assert "Total: 150,000 tokens" in summary
         assert "Total: $0.1200" in summary
-        assert "read_file: 50,000 tokens (5 calls)" in summary
 
 
 class TestCostEstimation:
@@ -394,7 +341,7 @@ class TestModelPricing:
     
     def test_oss_models_free(self):
         """Test that OSS models have zero token costs."""
-        oss_models = MODEL_PRICING["gpt-oss"]
+        oss_models = MODEL_PRICING["ollama"]
         
         for model_name, pricing in oss_models.items():
             assert pricing["input_token_per_million_cost"] == 0.0

@@ -274,7 +274,7 @@ cd6d0f4 feat: add execution history, config manager, and agent editor (features 
 
 ## 16. Session History Reference
 
-Previous sessions stored at `~/.claude/projects/-Users-ahmedmaged/`:
+Previous sessions stored at `~/.claude/projects/-Users-<username>/`:
 - `08ec79f0` — Session 1: Initial setup, multi-provider, bug fixes
 - `83dc4b3b` — Session 2+3: Dashboard, run_command, E2E testing, migration
 - `9d5bc3f6` — Related session

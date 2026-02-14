@@ -49,7 +49,10 @@ MAX_HISTORY = 100
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:8484",
+        "http://127.0.0.1:8484",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )

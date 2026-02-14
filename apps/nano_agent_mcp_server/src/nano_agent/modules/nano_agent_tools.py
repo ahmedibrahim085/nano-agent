@@ -199,6 +199,13 @@ def read_file_raw(file_path: str) -> str:
         # Resolve to absolute path
         path = resolve_path(file_path)
         
+        # Workspace focus boundary — keep agents within project directory
+        workspace = get_workspace()
+        try:
+            path.resolve().relative_to(workspace.resolve())
+        except ValueError:
+            return f"Error: Path must be within workspace: {file_path}"
+        
         if not path.exists():
             return ERROR_FILE_NOT_FOUND.format(file_path)
         if not path.is_file():
@@ -231,6 +238,13 @@ def write_file_raw(file_path: str, content: str) -> str:
     try:
         # Resolve to absolute path
         path = resolve_path(file_path)
+        
+        # Workspace focus boundary — keep agents within project directory
+        workspace = get_workspace()
+        try:
+            path.resolve().relative_to(workspace.resolve())
+        except ValueError:
+            return f"Error: Path must be within workspace: {file_path}"
         
         # Ensure parent directories exist
         ensure_parent_exists(path)
@@ -312,6 +326,13 @@ def edit_file_raw(file_path: str, old_str: str, new_str: str) -> str:
     try:
         # Resolve to absolute path
         path = resolve_path(file_path)
+        
+        # Workspace focus boundary — keep agents within project directory
+        workspace = get_workspace()
+        try:
+            path.resolve().relative_to(workspace.resolve())
+        except ValueError:
+            return f"Error: Path must be within workspace: {file_path}"
         
         # Check if file exists
         if not path.exists():
@@ -683,8 +704,36 @@ async def _kill_process_group_graceful(pid: int) -> None:
         pass
 
 
+def _force_kill_remaining(pids: list[int]) -> None:
+    """Synchronous force-kill of all PIDs. Used as fallback when async cleanup is cancelled."""
+    for pid in pids:
+        if _HAS_PROCESS_GROUPS:
+            try:
+                os.killpg(os.getpgid(pid), signal.SIGKILL)
+            except (ProcessLookupError, OSError):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except (ProcessLookupError, OSError):
+                    pass
+        else:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except (ProcessLookupError, OSError):
+                pass
+        try:
+            os.waitpid(pid, os.WNOHANG)
+        except ChildProcessError:
+            pass
+    pids.clear()
+    _bg_pids_var.set(None)
+
+
 async def _cleanup_background_processes() -> None:
-    """Kill all tracked background processes for the current agent context."""
+    """Kill all tracked background processes for the current agent context.
+
+    Resilient to asyncio.CancelledError — if cleanup is interrupted,
+    remaining processes are force-killed synchronously to prevent orphans.
+    """
     bg_pids = _bg_pids_var.get()
     if not bg_pids:
         return
@@ -696,6 +745,10 @@ async def _cleanup_background_processes() -> None:
                     os.waitpid(pid, os.WNOHANG)
                 except ChildProcessError:
                     pass
+            except asyncio.CancelledError:
+                # Graceful kill was interrupted — force kill this and all remaining
+                _force_kill_remaining(bg_pids)
+                return
             except Exception:
                 pass  # Don't let one failure block others
     finally:

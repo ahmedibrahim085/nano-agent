@@ -231,7 +231,12 @@ class TestCreateFileImplementation:
 
 class TestAgentTools:
     """Test the tool functions used by agents."""
-    
+
+    @pytest.fixture(autouse=True)
+    def _set_workspace(self, tmp_path):
+        """Set workspace to tmp_path so file tools accept paths within it."""
+        set_workspace(str(tmp_path))
+
     def test_read_file_tool(self, tmp_path):
         """Test the read_file tool function."""
         test_file = tmp_path / "agent_test.txt"
@@ -242,10 +247,10 @@ class TestAgentTools:
         
         assert result == test_content
     
-    def test_read_file_tool_error(self):
-        """Test read_file tool with error."""
-        result = read_file_raw("/non/existent/file.txt")
-        
+    def test_read_file_tool_error(self, tmp_path):
+        """Test read_file tool with non-existent file within workspace."""
+        result = read_file_raw(str(tmp_path / "nonexistent.txt"))
+
         assert "Error: File not found" in result
     
     def test_write_file_tool(self, tmp_path):

@@ -14,13 +14,18 @@ from pathlib import Path
 import os
 
 # Import the function to test
-from nano_agent.modules.nano_agent_tools import edit_file_raw
+from nano_agent.modules.nano_agent_tools import edit_file_raw, set_workspace
 from nano_agent.modules.constants import SUCCESS_FILE_EDIT
 
 
 class TestEditFile:
     """Test suite for the edit_file functionality."""
-    
+
+    @pytest.fixture(autouse=True)
+    def _set_workspace(self, tmp_path):
+        """Set workspace to tmp_path so file tools accept paths within it."""
+        set_workspace(str(tmp_path))
+
     def test_simple_edit(self, tmp_path):
         """Test a simple single-line edit."""
         # Create a test file

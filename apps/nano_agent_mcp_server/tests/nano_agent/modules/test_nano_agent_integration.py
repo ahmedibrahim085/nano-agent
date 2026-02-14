@@ -21,6 +21,7 @@ from nano_agent.modules.nano_agent import (
     write_file,
     get_file_info
 )
+from nano_agent.modules.nano_agent_tools import set_workspace
 from nano_agent.modules.data_types import PromptNanoAgentRequest
 
 
@@ -30,7 +31,12 @@ pytestmark = pytest.mark.integration
 
 class TestAgentTools:
     """Test the individual agent tools work correctly."""
-    
+
+    @pytest.fixture(autouse=True)
+    def _set_workspace(self, tmp_path):
+        """Set workspace to tmp_path so file tools accept paths within it."""
+        set_workspace(str(tmp_path))
+
     def test_read_file_tool(self, tmp_path):
         """Test reading a file with the tool."""
         test_file = tmp_path / "test.txt"
@@ -40,9 +46,9 @@ class TestAgentTools:
         result = read_file(str(test_file))
         assert result == test_content
     
-    def test_read_file_not_found(self):
-        """Test reading a non-existent file."""
-        result = read_file("/non/existent/file.txt")
+    def test_read_file_not_found(self, tmp_path):
+        """Test reading a non-existent file within workspace."""
+        result = read_file(str(tmp_path / "nonexistent.txt"))
         assert "Error: File not found" in result
     
     def test_list_directory_tool(self, tmp_path):

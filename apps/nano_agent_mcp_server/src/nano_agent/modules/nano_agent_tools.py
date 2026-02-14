@@ -586,6 +586,133 @@ def capture_args(tool_name: str, **kwargs):
     pending[tool_name] = kwargs
     logger.debug(f"Captured args for {tool_name}: {kwargs}")
 
+# ─── Git Helpers ────────────────────────────────────────────────────────────
+
+# Environment variables that could redirect git to a different repo
+_GIT_ENV_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")
+
+# Protected branches that cannot be deleted
+_PROTECTED_BRANCHES = {"main", "master", "develop"}
+
+# Glob patterns that discard all changes
+_DISCARD_ALL_PATTERNS = {".", "./", "*"}
+
+
+def _is_git_repository() -> bool:
+    """Check if the current workspace is inside a git repository."""
+    ws = get_workspace()
+    if (ws / ".git").exists():
+        return True
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=str(ws), capture_output=True, text=True, timeout=10,
+        )
+        return result.returncode == 0 and result.stdout.strip() == "true"
+    except Exception:
+        return False
+
+
+def _validate_git_safety(args: list[str]) -> Optional[str]:
+    """Validate git arguments for destructive operations.
+
+    Returns an error message string if the operation is blocked, or None if safe.
+    """
+    if not args:
+        return None
+
+    cmd = args[0]
+    args_set = set(args)
+
+    # Block: push + force flags
+    if cmd == "push" and args_set & {"--force", "-f", "--force-with-lease"}:
+        return "Error: Force push is not allowed"
+
+    # Block: reset --hard
+    if cmd == "reset" and "--hard" in args_set:
+        return "Error: Hard reset is not allowed"
+
+    # Block: branch -d/-D on protected branches
+    if cmd == "branch" and args_set & {"-d", "-D"}:
+        branch_names = set(args[1:]) - {"-d", "-D"}
+        if branch_names & _PROTECTED_BRANCHES:
+            return "Error: Cannot delete protected branch"
+
+    # Block: git clean (all variants)
+    if cmd == "clean":
+        return "Error: git clean is not allowed"
+
+    # Block: checkout/restore + discard-all patterns (., ./, *)
+    if cmd in ("checkout", "restore") and args_set & _DISCARD_ALL_PATTERNS:
+        return "Error: Discarding all changes is not allowed"
+
+    # Block: config alias (R2-CRITICAL-1: alias bypass)
+    if cmd == "config" and any(a.startswith("alias.") for a in args[1:]):
+        return "Error: Git alias configuration is not allowed"
+
+    return None
+
+
+def _run_git_command(args: list[str], allow_empty: bool = False) -> str:
+    """Execute a git command with safety guards and workspace enforcement.
+
+    Args:
+        args: Git subcommand and arguments (e.g., ["status"], ["commit", "-m", "msg"])
+        allow_empty: If True, empty stdout is not treated as an error
+
+    Returns:
+        Command output or error message
+    """
+    if not _is_git_repository():
+        return "Error: Not a git repository"
+
+    # Check safety guards
+    safety_error = _validate_git_safety(args)
+    if safety_error is not None:
+        return safety_error
+
+    # Clean git env vars (R2-CRITICAL-4)
+    clean_env = os.environ.copy()
+    for var in _GIT_ENV_VARS:
+        clean_env.pop(var, None)
+
+    try:
+        result = subprocess.run(
+            ["git"] + args,
+            cwd=str(get_workspace()),
+            capture_output=True,
+            text=True,
+            timeout=COMMAND_TIMEOUT_SECONDS,
+            env=clean_env,
+            errors="ignore",
+        )
+
+        stdout = result.stdout.strip()
+        stderr = result.stderr.strip()
+
+        if result.returncode != 0:
+            # Pass through git's own error messages
+            error_msg = stderr or stdout or "Unknown git error"
+            return f"Error: {error_msg}"
+
+        output = stdout
+        if not output and not allow_empty:
+            output = stderr if stderr else "No output"
+
+        # Truncate large output
+        if len(output) > BASH_OUTPUT_MAX_CHARS:
+            head = int(BASH_OUTPUT_MAX_CHARS * BASH_OUTPUT_HEAD_RATIO)
+            tail = int(BASH_OUTPUT_MAX_CHARS * BASH_OUTPUT_TAIL_RATIO)
+            output = output[:head] + "\n...(truncated)...\n" + output[-tail:]
+
+        return output
+
+    except subprocess.TimeoutExpired:
+        return f"Error: Git command timed out after {COMMAND_TIMEOUT_SECONDS}s"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+
 # Decorated tool functions for OpenAI Agent SDK
 @function_tool
 def read_file(file_path: str) -> str:
@@ -934,11 +1061,76 @@ async def run_tests(test_path: str = ".", framework: str = "auto") -> str:
     return await _raw_run_tests(test_path, framework)
 
 
+# ─── Git Tools ──────────────────────────────────────────────────────────────
+
+@function_tool
+def git_status() -> str:
+    """Show working tree status (branch, staged/unstaged changes)."""
+    capture_args("git_status")
+    return _run_git_command(["status"])
+
+
+@function_tool
+def git_commit(message: str) -> str:
+    """Commit staged changes with a message.
+
+    Args:
+        message: Commit message (cannot be empty)
+    """
+    capture_args("git_commit", message=message)
+    if not message or not message.strip():
+        return "Error: Commit message cannot be empty"
+    return _run_git_command(["commit", "-m", message])
+
+
+@function_tool
+def git_branch(name: str = "") -> str:
+    """Create and switch to a new branch, or list all branches if name is empty.
+
+    Args:
+        name: Branch name to create, or empty string to list branches
+    """
+    capture_args("git_branch", name=name)
+    if not name or not name.strip():
+        return _run_git_command(["branch", "-a"])
+    name = name.strip()
+    if name.startswith("-"):
+        return "Error: Branch name cannot start with a hyphen"
+    return _run_git_command(["checkout", "-b", name])
+
+
+@function_tool
+def git_diff(ref: str = "") -> str:
+    """Show changes: unstaged + staged if no ref, or diff against a specific ref.
+
+    Args:
+        ref: Optional ref to diff against (e.g., "HEAD~1", "main"). If empty, shows both unstaged and staged changes.
+    """
+    capture_args("git_diff", ref=ref)
+    if ref and ref.strip():
+        ref = ref.strip()
+        if ref.startswith("-"):
+            return "Error: Ref cannot start with a hyphen"
+        return _run_git_command(["diff", ref])
+    # Show both unstaged + staged with headers
+    unstaged = _run_git_command(["diff"], allow_empty=True)
+    staged = _run_git_command(["diff", "--staged"], allow_empty=True)
+
+    parts = []
+    if unstaged:
+        parts.append(f"=== Unstaged Changes ===\n{unstaged}")
+    if staged:
+        parts.append(f"=== Staged Changes ===\n{staged}")
+    if not parts:
+        return "No changes to show"
+    return "\n\n".join(parts)
+
+
 # Export all tools for the agent
 def get_nano_agent_tools():
     """
     Get all tools for the nano agent.
-    
+
     Returns:
         List of tool functions decorated with @function_tool
     """
@@ -951,4 +1143,8 @@ def get_nano_agent_tools():
         bash,
         search_files,
         run_tests,
+        git_status,
+        git_commit,
+        git_branch,
+        git_diff,
     ]

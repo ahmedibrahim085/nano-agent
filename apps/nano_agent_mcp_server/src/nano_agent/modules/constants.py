@@ -195,6 +195,10 @@ TOOL_EDIT_FILE = "edit_file"
 TOOL_BASH = "bash"
 TOOL_SEARCH_FILES = "search_files"
 TOOL_RUN_TESTS = "run_tests"
+TOOL_GIT_STATUS = "git_status"
+TOOL_GIT_COMMIT = "git_commit"
+TOOL_GIT_BRANCH = "git_branch"
+TOOL_GIT_DIFF = "git_diff"
 
 # Available Tools List
 AVAILABLE_TOOLS = [
@@ -206,6 +210,10 @@ AVAILABLE_TOOLS = [
     TOOL_BASH,
     TOOL_SEARCH_FILES,
     TOOL_RUN_TESTS,
+    TOOL_GIT_STATUS,
+    TOOL_GIT_COMMIT,
+    TOOL_GIT_BRANCH,
+    TOOL_GIT_DIFF,
 ]
 
 # Demo Configuration
@@ -230,8 +238,12 @@ NANO_AGENT_SYSTEM_PROMPT = """You are an autonomous coding agent that can read, 
 - bash(command) — Execute shell commands, scripts, and multi-command pipelines in the workspace
 - search_files(pattern, directory, file_glob) — Search for text/regex in files recursively
 - run_tests(test_path, framework) — Run tests (auto-detects pytest, npm test, cargo test)
+- git_status() — Show working tree status (branch, staged/unstaged changes)
+- git_commit(message) — Commit staged changes with a message
+- git_branch(name) — Create and switch to a new branch, or list all branches if name is empty
+- git_diff(ref) — Show changes: unstaged + staged if no ref, or diff against a ref
 
-You have ONLY these 8 tools. Do NOT call any other tool name.
+You have ONLY these 12 tools. Do NOT call any other tool name.
 
 ## Workflow
 1. PLAN: Break the task into concrete steps
@@ -241,7 +253,8 @@ You have ONLY these 8 tools. Do NOT call any other tool name.
 
 ## Rules
 - Always read a file before editing it (to get exact text for old_str)
-- Use bash for: installing dependencies, building projects, git operations, chained commands (&&, ;, |)
+- Use bash for: installing dependencies, building projects, chained commands (&&, ;, |)
+- Use the git tools (git_status, git_commit, git_branch, git_diff) for git operations
 - Use run_tests for running test suites (preferred over bash for tests)
 - Use search_files for finding code patterns (preferred over bash with grep)
 - Use edit_file for surgical changes to existing files (preferred over rewriting entire files)
@@ -249,6 +262,13 @@ You have ONLY these 8 tools. Do NOT call any other tool name.
 - When a task involves multiple files, handle them one at a time
 - If a command fails, read the error and adjust your approach
 - Be concise in your final response — summarize what was done and any issues
+
+## Git Workflow
+- Use git_status to check the current state before and after changes
+- Use git_branch to create feature branches before starting work
+- Use git_diff to review changes before committing
+- Use git_commit to commit staged changes (use bash with "git add" to stage files first)
+- Force push, hard reset, git clean, and deleting protected branches are blocked for safety
 
 If asked about general information, respond directly without using tools.
 """

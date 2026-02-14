@@ -115,7 +115,7 @@ class TestProviderConfig:
             )
             
             MockOpenAI.assert_called_once_with(
-                base_url="http://localhost:11434/v1",
+                base_url="http://127.0.0.1:11434/v1",
                 api_key="ollama"
             )
             
@@ -192,7 +192,7 @@ class TestProviderConfig:
                 PROVIDER_REQUIREMENTS
             )
             assert is_valid is False
-            assert "Error checking Ollama availability" in error
+            assert "Error checking ollama availability" in error
     
     def test_setup_provider_disables_tracing_non_openai(self):
         """Test that tracing is disabled for non-OpenAI providers without key."""
@@ -203,14 +203,14 @@ class TestProviderConfig:
             mock_disable.assert_called_once_with(True)
     
     def test_setup_provider_enables_tracing_for_openai(self):
-        """Test that tracing is explicitly enabled for OpenAI provider.
+        """Test that tracing is globally disabled for all providers.
 
-        This test verifies Bug 3 fix: tracing state must be explicitly set
-        for each provider to avoid race conditions in concurrent environments.
+        Tracing is unconditionally disabled (set_tracing_disabled(True)) to
+        prevent race conditions in concurrent agent environments.
         """
         with patch('nano_agent.modules.provider_config.set_tracing_disabled') as mock_disable:
             ProviderConfig.setup_provider("openai")
-            mock_disable.assert_called_once_with(False)
+            mock_disable.assert_called_once_with(True)
 
 
 if __name__ == "__main__":

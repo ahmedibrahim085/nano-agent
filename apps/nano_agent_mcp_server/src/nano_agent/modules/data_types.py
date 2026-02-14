@@ -96,6 +96,10 @@ class ProviderHealthStatus(BaseModel):
         default=None,
         description="Error message if status is 'down'"
     )
+    loaded_models: Optional[List[str]] = Field(
+        default=None,
+        description="List of models currently loaded in memory (local providers only)"
+    )
 
 
 class ModelCapability(BaseModel):

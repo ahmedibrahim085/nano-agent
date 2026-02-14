@@ -31,6 +31,7 @@ from ..modules.constants import (
     AVAILABLE_MODELS,
     ZAI_BASE_URL,
     ZAI_AVAILABLE_MODELS,
+    LMSTUDIO_BASE_URL,
     QWEN_BASE_URL,
     QWEN_AVAILABLE_MODELS,
     MODEL_INFO,
@@ -85,7 +86,7 @@ LOCAL_PROVIDERS = {
         "extract": lambda d: [m["name"] for m in d.get("models", [])],
     },
     "lmstudio": {
-        "url": "http://127.0.0.1:1234",
+        "url": LMSTUDIO_BASE_URL,
         "health": "/v1/models",
         "extract": lambda d: [m["id"] for m in d.get("data", [])],
     },

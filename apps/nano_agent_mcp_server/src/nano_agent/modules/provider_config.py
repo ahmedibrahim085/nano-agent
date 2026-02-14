@@ -21,15 +21,63 @@ from . import typing_fix
 
 # Import data types for health check
 from .data_types import ProviderHealthStatus, CheckProvidersResponse
-from .constants import AVAILABLE_MODELS, ZAI_AVAILABLE_MODELS, get_model_capabilities
+from .constants import AVAILABLE_MODELS, ZAI_AVAILABLE_MODELS, LMSTUDIO_BASE_URL, get_model_capabilities
 
 logger = logging.getLogger(__name__)
 
 # Shared config for local providers: (base_url, endpoint, model_extractor, start_hint)
 LOCAL_PROVIDER_CONFIG = {
     "ollama": ("http://127.0.0.1:11434", "/api/tags", lambda d: [m["name"] for m in d.get("models", [])], "ollama serve"),
-    "lmstudio": ("http://127.0.0.1:1234", "/v1/models", lambda d: [m["id"] for m in d.get("data", [])], "LM Studio app"),
+    "lmstudio": (LMSTUDIO_BASE_URL, "/v1/models", lambda d: [m["id"] for m in d.get("data", [])], "LM Studio app"),
 }
+
+
+def _matches_lmstudio_model(key: str, model: str) -> bool:
+    """Flexible model key matching: native key vs user model string.
+
+    Handles:
+    - Exact match: key="qwen/qwen3-coder-next", model="qwen/qwen3-coder-next"
+    - Suffix match: key="qwen/qwen3-coder-next", model="qwen3-coder-next"
+    - Instance suffix: key="qwen/qwen3-coder-next:2", model="qwen/qwen3-coder-next"
+    - Case insensitive: key="Qwen/Qwen3-Coder-Next", model="qwen/qwen3-coder-next"
+    """
+    key_base = key.rsplit(":", 1)[0] if ":" in key and key.rsplit(":", 1)[1].isdigit() else key
+    model_lower = model.lower()
+    if key.lower() == model_lower or key_base.lower() == model_lower:
+        return True
+    if "/" in key_base and key_base.rsplit("/", 1)[1].lower() == model_lower:
+        return True
+    return False
+
+
+def _resolve_lmstudio_model_key(user_model: str, native_models: list[dict]) -> tuple[str | None, str | None]:
+    """Resolve user's model name to native LM Studio key.
+
+    Args:
+        user_model: Model name as passed by user (may be short form)
+        native_models: List of model dicts from GET /api/v1/models response
+
+    Returns:
+        (resolved_key, None) on success.
+        (None, error_message) if ambiguous.
+        (None, None) if not found.
+    """
+    user_lower = user_model.lower()
+    # Exact match first (case-insensitive)
+    for m in native_models:
+        if m.get("key", "").lower() == user_lower:
+            return m["key"], None
+    # Suffix match: key ends with /user_model
+    candidates = [m["key"] for m in native_models
+                  if m.get("key", "").lower().endswith(f"/{user_lower}")]
+    if len(candidates) == 1:
+        return candidates[0], None
+    if len(candidates) > 1:
+        return None, (
+            f"LM Studio: Ambiguous model name '{user_model}'. "
+            f"Multiple matches: {', '.join(candidates)}. Use the full key."
+        )
+    return None, None  # not found
 
 
 class ProviderConfig:
@@ -159,7 +207,7 @@ class ProviderConfig:
             # Use OpenAI-compatible endpoint for LM Studio
             logger.debug(f"Creating LM Studio agent with model: {model}")
             lmstudio_client = AsyncOpenAI(
-                base_url="http://127.0.0.1:1234/v1",
+                base_url=f"{LMSTUDIO_BASE_URL}/v1",
                 api_key="lm-studio"  # Dummy key required by client
             )
             return Agent(
@@ -346,6 +394,160 @@ class ProviderConfig:
             return False, f"Missing environment variable: {required_key}"
 
         return True, None
+
+    @staticmethod
+    async def preload_lmstudio_model_async(model: str, base_url: str) -> tuple[bool, str | None]:
+        """Pre-load a model in LM Studio before agent dispatch (async).
+
+        Manual loads are exempt from auto-eviction (no TTL).
+        POST /api/v1/models/load is NOT idempotent — creates duplicate instances.
+        We check-before-load to avoid duplicates.
+
+        Args:
+            model: Model identifier (e.g., "qwen/qwen3-coder-next")
+            base_url: LM Studio base URL (e.g., "http://127.0.0.1:1234")
+
+        Returns:
+            (True, None) on success.
+            (False, error_message) on failure.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                # Step 1: Get model list and resolve native key
+                check = await client.get(f"{base_url}/api/v1/models")
+                if check.status_code != 200:
+                    logger.warning("LM Studio native API unavailable, relying on JIT loading")
+                    return True, None
+
+                native_models = check.json().get("models", [])
+                resolved_key, ambiguity_err = _resolve_lmstudio_model_key(model, native_models)
+
+                if ambiguity_err:
+                    return False, ambiguity_err
+
+                if not resolved_key:
+                    available = [m.get("key", "") for m in native_models[:5]]
+                    return False, (
+                        f"LM Studio: Model '{model}' not found. "
+                        f"Available: {', '.join(available)}"
+                    )
+
+                # Step 2: Check if already loaded (avoid duplicate instances)
+                for m in native_models:
+                    if m.get("key") == resolved_key and m.get("loaded_instances"):
+                        logger.info(f"LM Studio: Model '{model}' already loaded, skipping pre-load")
+                        return True, None
+
+                # Step 3: Load the model using resolved native key
+                logger.info(f"LM Studio: Pre-loading model '{resolved_key}'...")
+                response = await client.post(
+                    f"{base_url}/api/v1/models/load",
+                    json={"model": resolved_key}
+                )
+
+                if response.status_code != 200:
+                    body = response.text
+                    if any(kw in body.lower() for kw in ("memory", "insufficient", "vram")):
+                        return False, (
+                            f"LM Studio: Insufficient memory to load model '{model}'. "
+                            f"Close other models or use a smaller model."
+                        )
+                    return False, f"LM Studio: Failed to pre-load model '{model}': {body}"
+
+                # Step 4: Verify loaded (post-load verification)
+                verify = await client.get(f"{base_url}/api/v1/models")
+                if verify.status_code == 200:
+                    for m in verify.json().get("models", []):
+                        if _matches_lmstudio_model(m.get("key", ""), resolved_key):
+                            if m.get("loaded_instances"):
+                                logger.info(f"LM Studio: Model '{model}' pre-loaded and verified")
+                                return True, None
+
+                    return False, (
+                        f"LM Studio: Model '{model}' loaded but verification failed "
+                        f"— not found in loaded instances."
+                    )
+
+                # POST succeeded — trust it even if verification GET failed
+                logger.warning(f"LM Studio: Model '{model}' load requested but verification skipped")
+                return True, None
+
+        except httpx.ConnectError:
+            return False, f"LM Studio: Service not running at {base_url}. Start LM Studio app first."
+        except httpx.TimeoutException:
+            return False, f"LM Studio: Timeout loading model '{model}'. The model may be too large."
+        except Exception as e:
+            return False, f"LM Studio: Error pre-loading model '{model}': {str(e)}"
+
+    @staticmethod
+    def preload_lmstudio_model(model: str, base_url: str) -> tuple[bool, str | None]:
+        """Sync version of preload_lmstudio_model_async. Uses requests library."""
+        try:
+            # Step 1: Get model list and resolve native key
+            check = requests.get(f"{base_url}/api/v1/models", timeout=10)
+            if check.status_code != 200:
+                logger.warning("LM Studio native API unavailable, relying on JIT loading")
+                return True, None
+
+            native_models = check.json().get("models", [])
+            resolved_key, ambiguity_err = _resolve_lmstudio_model_key(model, native_models)
+
+            if ambiguity_err:
+                return False, ambiguity_err
+
+            if not resolved_key:
+                available = [m.get("key", "") for m in native_models[:5]]
+                return False, (
+                    f"LM Studio: Model '{model}' not found. "
+                    f"Available: {', '.join(available)}"
+                )
+
+            # Step 2: Check if already loaded
+            for m in native_models:
+                if m.get("key") == resolved_key and m.get("loaded_instances"):
+                    logger.info(f"LM Studio: Model '{model}' already loaded, skipping pre-load")
+                    return True, None
+
+            # Step 3: Load the model
+            logger.info(f"LM Studio: Pre-loading model '{resolved_key}'...")
+            response = requests.post(
+                f"{base_url}/api/v1/models/load",
+                json={"model": resolved_key},
+                timeout=120
+            )
+
+            if response.status_code != 200:
+                body = response.text
+                if any(kw in body.lower() for kw in ("memory", "insufficient", "vram")):
+                    return False, (
+                        f"LM Studio: Insufficient memory to load model '{model}'. "
+                        f"Close other models or use a smaller model."
+                    )
+                return False, f"LM Studio: Failed to pre-load model '{model}': {body}"
+
+            # Step 4: Verify loaded
+            verify = requests.get(f"{base_url}/api/v1/models", timeout=10)
+            if verify.status_code == 200:
+                for m in verify.json().get("models", []):
+                    if _matches_lmstudio_model(m.get("key", ""), resolved_key):
+                        if m.get("loaded_instances"):
+                            logger.info(f"LM Studio: Model '{model}' pre-loaded and verified")
+                            return True, None
+
+                return False, (
+                    f"LM Studio: Model '{model}' loaded but verification failed "
+                    f"— not found in loaded instances."
+                )
+
+            logger.warning(f"LM Studio: Model '{model}' load requested but verification skipped")
+            return True, None
+
+        except requests.ConnectionError:
+            return False, f"LM Studio: Service not running at {base_url}. Start LM Studio app first."
+        except requests.Timeout:
+            return False, f"LM Studio: Timeout loading model '{model}'. The model may be too large."
+        except Exception as e:
+            return False, f"LM Studio: Error pre-loading model '{model}': {str(e)}"
 
 
 async def _check_provider_health(provider: str) -> ProviderHealthStatus:
@@ -537,28 +739,57 @@ async def _check_provider_health(provider: str) -> ProviderHealthStatus:
                     error=f"Error checking {provider}: {str(e)}"
                 )
 
-        # LM Studio: Service running check + model list
+        # LM Studio: Native API with per-model load state + fallback
         elif provider == "lmstudio":
             base_url, endpoint, extract_models, start_hint = LOCAL_PROVIDER_CONFIG[provider]
             try:
                 async with httpx.AsyncClient(timeout=3.0) as client:
-                    response = await client.get(f"{base_url}{endpoint}")
+                    # Try native API first for per-model load state
+                    native_response = await client.get(f"{base_url}/api/v1/models")
 
                 latency_ms = (time.perf_counter() - start_time) * 1000
-                models = extract_models(response.json())
 
-                if not models:
+                if native_response.status_code == 200:
+                    data = native_response.json()
+                    raw_models = data.get("models", [])
+                    models = [m["key"] for m in raw_models if m.get("key")]
+
+                    if not models:
+                        return ProviderHealthStatus(
+                            status="down",
+                            available_models=[],
+                            latency_ms=latency_ms
+                        )
+
+                    loaded = [m["key"] for m in raw_models if m.get("loaded_instances")]
+                    status = "up" if len(loaded) == len(models) else "partial"
+
                     return ProviderHealthStatus(
-                        status="down",
-                        available_models=[],
+                        status=status,
+                        available_models=models,
+                        loaded_models=loaded,
                         latency_ms=latency_ms
                     )
+                else:
+                    # Native API not available (pre-0.4.0) — fall back to OpenAI-compat
+                    async with httpx.AsyncClient(timeout=3.0) as client:
+                        response = await client.get(f"{base_url}{endpoint}")
 
-                return ProviderHealthStatus(
-                    status="up",
-                    available_models=models,
-                    latency_ms=latency_ms
-                )
+                    latency_ms = (time.perf_counter() - start_time) * 1000
+                    models = extract_models(response.json())
+
+                    if not models:
+                        return ProviderHealthStatus(
+                            status="down",
+                            available_models=[],
+                            latency_ms=latency_ms
+                        )
+
+                    return ProviderHealthStatus(
+                        status="up",
+                        available_models=models,
+                        latency_ms=latency_ms
+                    )
 
             except httpx.ConnectError:
                 return ProviderHealthStatus(

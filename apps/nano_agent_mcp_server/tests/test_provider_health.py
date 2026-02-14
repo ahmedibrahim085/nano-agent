@@ -269,12 +269,13 @@ async def test_check_provider_health_ollama_empty_models():
 
 @pytest.mark.asyncio
 async def test_check_provider_health_lmstudio_up():
-    """Verify LM Studio up state."""
+    """Verify LM Studio up state via native API with loaded models."""
     mock_response = MagicMock()
+    mock_response.status_code = 200
     mock_response.json.return_value = {
-        "data": [
-            {"id": "qwen3-coder-next"},
-            {"id": "gpt-oss:20b"}
+        "models": [
+            {"key": "qwen/qwen3-coder-next", "loaded_instances": [{"id": "i1"}]},
+            {"key": "openai/gpt-oss-20b", "loaded_instances": [{"id": "i2"}]},
         ]
     }
 
@@ -287,7 +288,8 @@ async def test_check_provider_health_lmstudio_up():
 
     assert result.status == "up"
     assert len(result.available_models) == 2
-    assert "qwen3-coder-next" in result.available_models
+    assert "qwen/qwen3-coder-next" in result.available_models
+    assert result.loaded_models == ["qwen/qwen3-coder-next", "openai/gpt-oss-20b"]
     assert result.latency_ms > 0
     assert result.error is None
 
@@ -502,9 +504,10 @@ async def test_check_providers_mcp_tool():
 
 @pytest.mark.asyncio
 async def test_check_provider_health_lmstudio_empty_models():
-    """Verify LM Studio down with no models loaded."""
+    """Verify LM Studio down with no models via native API."""
     mock_response = MagicMock()
-    mock_response.json.return_value = {"data": []}
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"models": []}
 
     mock_client = AsyncMock()
     mock_client.get.return_value = mock_response
@@ -594,3 +597,133 @@ async def test_check_provider_health_unknown_provider():
     assert result.status == "down"
     assert result.available_models == []
     assert "Unknown provider: foobar" in result.error
+
+
+# ============================================================================
+# Phase 1: loaded_models field tests
+# ============================================================================
+
+def test_provider_health_status_loaded_models_field():
+    """loaded_models is Optional[List[str]], defaults to None."""
+    status = ProviderHealthStatus(status="up", available_models=["m1"])
+    assert status.loaded_models is None
+
+    status2 = ProviderHealthStatus(status="partial", available_models=["m1", "m2"], loaded_models=["m1"])
+    assert status2.loaded_models == ["m1"]
+
+def test_provider_health_status_loaded_models_serialization():
+    """loaded_models=None serializes as null, list serializes as list."""
+    s1 = ProviderHealthStatus(status="up", available_models=["m1"])
+    d1 = s1.model_dump()
+    assert "loaded_models" in d1
+    assert d1["loaded_models"] is None
+
+    s2 = ProviderHealthStatus(status="partial", available_models=["m1"], loaded_models=["m1"])
+    d2 = s2.model_dump()
+    assert d2["loaded_models"] == ["m1"]
+
+
+# ============================================================================
+# Phase 2: LM Studio dual-path health check tests
+# ============================================================================
+
+@pytest.mark.asyncio
+async def test_lmstudio_health_all_loaded():
+    """LM Studio 'up' when all models have loaded_instances."""
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "models": [
+            {"key": "qwen/qwen3-coder-next", "loaded_instances": [{"id": "i1"}]},
+            {"key": "openai/gpt-oss-20b", "loaded_instances": [{"id": "i2"}]},
+        ]
+    }
+    mock_client = AsyncMock()
+    mock_client.get.return_value = mock_response
+
+    with patch("httpx.AsyncClient") as mc:
+        mc.return_value.__aenter__.return_value = mock_client
+        result = await _check_provider_health("lmstudio")
+
+    assert result.status == "up"
+    assert result.available_models == ["qwen/qwen3-coder-next", "openai/gpt-oss-20b"]
+    assert result.loaded_models == ["qwen/qwen3-coder-next", "openai/gpt-oss-20b"]
+
+@pytest.mark.asyncio
+async def test_lmstudio_health_some_loaded_partial():
+    """LM Studio 'partial' when some models not loaded."""
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "models": [
+            {"key": "qwen/qwen3-coder-next", "loaded_instances": [{"id": "i1"}]},
+            {"key": "openai/gpt-oss-20b", "loaded_instances": []},
+        ]
+    }
+    mock_client = AsyncMock()
+    mock_client.get.return_value = mock_response
+
+    with patch("httpx.AsyncClient") as mc:
+        mc.return_value.__aenter__.return_value = mock_client
+        result = await _check_provider_health("lmstudio")
+
+    assert result.status == "partial"
+    assert result.available_models == ["qwen/qwen3-coder-next", "openai/gpt-oss-20b"]
+    assert result.loaded_models == ["qwen/qwen3-coder-next"]
+
+@pytest.mark.asyncio
+async def test_lmstudio_health_none_loaded_partial():
+    """LM Studio 'partial' when no models loaded but models exist."""
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "models": [
+            {"key": "qwen/qwen3-coder-next", "loaded_instances": []},
+            {"key": "openai/gpt-oss-20b", "loaded_instances": []},
+        ]
+    }
+    mock_client = AsyncMock()
+    mock_client.get.return_value = mock_response
+
+    with patch("httpx.AsyncClient") as mc:
+        mc.return_value.__aenter__.return_value = mock_client
+        result = await _check_provider_health("lmstudio")
+
+    assert result.status == "partial"
+    assert result.loaded_models == []
+
+@pytest.mark.asyncio
+async def test_lmstudio_health_native_fallback_to_compat():
+    """LM Studio falls back to OpenAI-compat when native API returns non-200."""
+    native_response = MagicMock()
+    native_response.status_code = 404
+
+    compat_response = MagicMock()
+    compat_response.json.return_value = {"data": [{"id": "model-a"}, {"id": "model-b"}]}
+
+    mock_client = AsyncMock()
+    mock_client.get.side_effect = [native_response, compat_response]
+
+    with patch("httpx.AsyncClient") as mc:
+        mc.return_value.__aenter__.return_value = mock_client
+        result = await _check_provider_health("lmstudio")
+
+    assert result.status == "up"
+    assert result.available_models == ["model-a", "model-b"]
+    assert result.loaded_models is None
+
+@pytest.mark.asyncio
+async def test_lmstudio_health_native_empty_models():
+    """LM Studio 'down' when native API returns empty models list."""
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"models": []}
+    mock_client = AsyncMock()
+    mock_client.get.return_value = mock_response
+
+    with patch("httpx.AsyncClient") as mc:
+        mc.return_value.__aenter__.return_value = mock_client
+        result = await _check_provider_health("lmstudio")
+
+    assert result.status == "down"
+    assert result.available_models == []

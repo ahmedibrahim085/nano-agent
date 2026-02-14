@@ -4,6 +4,50 @@ Newest releases first. Each release separated by `---`.
 
 ---
 
+# Release: LM Studio Integration Upgrade
+
+**Branch**: `feat/better-support-local-llms-lmstudio`
+**Base**: `main` (post GLM-5 merge)
+**Date**: 2026-02-14
+**Commits**: 5 | **Files changed**: 7 | **+1398 / -24 lines**
+
+## Summary
+
+Upgrades LM Studio integration with native API support for per-model load state reporting and pre-load before agent dispatch. Three features (R1+R2+R3) implemented in parallel by GLM-5 (health check) and qwen3-coder-next (pre-load).
+
+## What Changed
+
+### R1: Native Health Check with Fallback
+- Health check now tries LM Studio native API (`/api/v1/models`) first
+- Returns per-model `key` and `loaded_instances` state
+- Falls back to OpenAI-compat (`/v1/models`) for pre-0.4.0 LM Studio
+- `LOCAL_PROVIDER_CONFIG` stays unchanged (shared by 3 call sites)
+
+### R2: Per-Model Load State (partial status)
+- New `loaded_models` field on `ProviderHealthStatus` (Optional[List[str]], default=None)
+- Status is "up" when all models loaded, "partial" when some/none loaded
+- Backward compatible: field is None for non-local providers
+
+### R3: Pre-Load Model Before Dispatch
+- `LMSTUDIO_BASE_URL` constant extracted (single source of truth)
+- `_matches_lmstudio_model()`: flexible key matching (exact, suffix, case-insensitive, instance suffix)
+- `_resolve_lmstudio_model_key()`: maps user's short model name to native key
+- `preload_lmstudio_model_async()` / `preload_lmstudio_model()`: check-before-load guard (POST /load is NOT idempotent), post-load verification, memory error detection
+- Wired into both async and sync execution paths, after tool validation, before provider setup
+- Pre-load failure returns early error without reaching Runner
+
+## Critical Findings During Planning
+- **Native `key` != OpenAI-compat `id`**: e.g., `qwen/qwen3-coder-next` vs `qwen3-coder-next`
+- **POST /api/v1/models/load is NOT idempotent**: creates duplicate instances with `:N` suffix
+- **Manual loads exempt from auto-eviction**: no TTL management needed (R5 auto-solved)
+
+## Test Coverage
+- 46 new tests in `test_lmstudio_preload.py` (matching, resolution, preload, execution wiring)
+- 7 new + 2 updated tests in `test_provider_health.py` (health check dual-path, loaded_models field)
+- **Total: 53 new tests, 2 updated tests**
+
+---
+
 # Release: GLM-5 Model Support
 
 **Branch**: `feat/glm5-model`

@@ -1,9 +1,6 @@
 #!/usr/bin/env python
 """Nano Agent MCP Server - Main entry point."""
 
-# Apply typing fixes FIRST before any other imports that might use OpenAI SDK
-from .modules import typing_fix
-
 import logging
 import setproctitle
 from dotenv import load_dotenv

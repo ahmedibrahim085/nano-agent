@@ -16,9 +16,6 @@ from agents.extensions.models.litellm_model import LitellmModel
 import requests
 import httpx
 
-# Apply typing fixes for Python 3.12+ compatibility
-from . import typing_fix
-
 # Import data types for health check
 from .data_types import ProviderHealthStatus, CheckProvidersResponse
 from .constants import AVAILABLE_MODELS, ZAI_AVAILABLE_MODELS, LMSTUDIO_BASE_URL, get_model_capabilities

@@ -92,9 +92,11 @@ MODEL_CAPABILITIES: dict[str, ModelCapability] = {
     ),
     "gpt-5-mini": ModelCapability(
         max_tokens=32000,
+        supports_temperature=False,
     ),
     "gpt-5-nano": ModelCapability(
         max_tokens=16000,
+        supports_temperature=False,
     ),
     "gpt-4o": ModelCapability(
         max_tokens=16384,

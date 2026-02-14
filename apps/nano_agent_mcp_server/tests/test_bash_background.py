@@ -235,13 +235,11 @@ class TestBashBackgroundContextIsolation:
         results = {}
 
         def run_in_ctx(name, tmpdir):
-            async def inner():
-                set_workspace(tmpdir)
-                _bg_pids_var.set(None)  # Reset for this context
-                pids = _get_bg_pids()
-                pids.append(999 if name == "a" else 888)
-                results[name] = list(pids)
-            asyncio.run(inner())
+            set_workspace(tmpdir)
+            _bg_pids_var.set(None)  # Reset for this context
+            pids = _get_bg_pids()
+            pids.append(999 if name == "a" else 888)
+            results[name] = list(pids)
 
         with tempfile.TemporaryDirectory() as tmpdir_a, \
              tempfile.TemporaryDirectory() as tmpdir_b:
@@ -377,7 +375,10 @@ class TestBashBackgroundEdgeCases:
                 child_sid = int(sid_file.read_text().strip())
                 our_sid = os.getsid(os.getpid())
                 assert child_sid != our_sid, "Child should be in its own session"
-            os.kill(pid, signal.SIGKILL)
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass  # Process already exited
 
 
 # ─── Tool Registration ──────────────────────────────────────────────────────

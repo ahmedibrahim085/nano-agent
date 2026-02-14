@@ -65,9 +65,9 @@ class TestGitConstants:
         assert TOOL_GIT_DIFF == "git_diff"
 
     def test_git_tools_in_available_tools(self):
-        """AVAILABLE_TOOLS should have 12 items including all 4 git tools."""
+        """AVAILABLE_TOOLS should have 13 items including all 4 git tools."""
         from nano_agent.modules.constants import AVAILABLE_TOOLS
-        assert len(AVAILABLE_TOOLS) == 12
+        assert len(AVAILABLE_TOOLS) == 13
         for tool_name in ["git_status", "git_commit", "git_branch", "git_diff"]:
             assert tool_name in AVAILABLE_TOOLS, f"{tool_name} missing from AVAILABLE_TOOLS"
 
@@ -78,7 +78,7 @@ class TestGitConstants:
         assert "git_commit" in NANO_AGENT_SYSTEM_PROMPT
         assert "git_branch" in NANO_AGENT_SYSTEM_PROMPT
         assert "git_diff" in NANO_AGENT_SYSTEM_PROMPT
-        assert "12 tools" in NANO_AGENT_SYSTEM_PROMPT
+        assert "13 tools" in NANO_AGENT_SYSTEM_PROMPT
 
 
 # ─── git_status Tests (2) ─────────────────────────────────────────────────

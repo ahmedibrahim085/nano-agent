@@ -47,7 +47,8 @@ from .constants import (
     ERROR_PROVIDER_NOT_SUPPORTED,
     SUCCESS_AGENT_COMPLETE,
     VERSION,
-    PROVIDER_REQUIREMENTS
+    PROVIDER_REQUIREMENTS,
+    LMSTUDIO_BASE_URL
 )
 
 # Import tools from nano_agent_tools
@@ -462,6 +463,18 @@ async def _execute_nano_agent_async(request: PromptNanoAgentRequest, enable_rich
                 execution_time_seconds=time.time() - start_time
             )
 
+        # Pre-load model for LM Studio (manual load = no TTL, exempt from auto-eviction)
+        if request.provider == "lmstudio":
+            preload_ok, preload_err = await ProviderConfig.preload_lmstudio_model_async(
+                request.model, LMSTUDIO_BASE_URL
+            )
+            if not preload_ok:
+                return PromptNanoAgentResponse(
+                    success=False,
+                    error=preload_err,
+                    execution_time_seconds=time.time() - start_time
+                )
+
         # Setup provider-specific configurations
         ProviderConfig.setup_provider(request.provider)
 
@@ -609,6 +622,18 @@ def _execute_nano_agent(request: PromptNanoAgentRequest, enable_rich_logging: bo
                 error=tools_err,
                 execution_time_seconds=time.time() - start_time
             )
+
+        # Pre-load model for LM Studio (manual load = no TTL, exempt from auto-eviction)
+        if request.provider == "lmstudio":
+            preload_ok, preload_err = ProviderConfig.preload_lmstudio_model(
+                request.model, LMSTUDIO_BASE_URL
+            )
+            if not preload_ok:
+                return PromptNanoAgentResponse(
+                    success=False,
+                    error=preload_err,
+                    execution_time_seconds=time.time() - start_time
+                )
 
         # Setup provider-specific configurations
         ProviderConfig.setup_provider(request.provider)
@@ -1055,3 +1080,15 @@ from .nano_agent_tools import (
     list_directory_raw as list_directory,
     get_file_info_raw as get_file_info
 )
+
+
+class NanoAgent:
+    """Wrapper class for nano agent execution methods (for testing purposes)."""
+    
+    async def execute_nano_agent_async(self, request: PromptNanoAgentRequest) -> PromptNanoAgentResponse:
+        """Async execution wrapper."""
+        return await _execute_nano_agent_async(request, enable_rich_logging=False)
+    
+    def _execute_nano_agent(self, request: PromptNanoAgentRequest) -> PromptNanoAgentResponse:
+        """Sync execution wrapper."""
+        return _execute_nano_agent(request, enable_rich_logging=False)

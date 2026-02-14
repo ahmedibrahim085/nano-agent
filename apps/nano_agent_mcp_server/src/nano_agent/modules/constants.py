@@ -64,6 +64,9 @@ PROVIDER_REQUIREMENTS = {
     "qwen": None,  # OAuth file-based auth, not env var
 }
 
+# LM Studio Configuration
+LMSTUDIO_BASE_URL = "http://127.0.0.1:1234"
+
 # Z.ai Configuration
 ZAI_BASE_URL = "https://api.z.ai/api/anthropic"
 ZAI_AVAILABLE_MODELS = ["glm-5", "glm-4.7", "glm-4.5-air"]

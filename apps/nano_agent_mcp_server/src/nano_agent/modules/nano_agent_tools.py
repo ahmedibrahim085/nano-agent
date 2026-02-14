@@ -16,6 +16,8 @@ from typing import Optional, Dict, Any
 import json
 import subprocess
 import shlex
+import signal
+import time
 
 # Import function_tool decorator from agents SDK
 try:
@@ -517,9 +519,24 @@ BASH_OUTPUT_TAIL_RATIO = 0.35  # Keep 35% from end
 # CWD tracking marker — unique enough to avoid collisions with user output
 _CWD_MARKER = "__NANO_CWD_f7e2a1__"
 
+# Platform capability: process groups (Unix-only, not available on Windows)
+_HAS_PROCESS_GROUPS = hasattr(os, 'killpg')
+
+# Background process limits
+MAX_BACKGROUND_PROCESSES = 5
+_GRACEFUL_KILL_TIMEOUT = 3.0  # seconds for SIGTERM before SIGKILL
+_BG_OUTPUT_PREFIX = "nano_bg_"
+_BG_OUTPUT_SUFFIX = ".log"
+
 # Persistent CWD for bash tool (per-task via ContextVar)
 _bash_cwd_var: contextvars.ContextVar[Optional[Path]] = contextvars.ContextVar(
     '_bash_cwd', default=None
+)
+
+# Background process tracking (per-agent via ContextVar)
+# Must be None default — mutable list default would be shared across contexts
+_bg_pids_var: contextvars.ContextVar[Optional[list[int]]] = contextvars.ContextVar(
+    '_bg_pids', default=None
 )
 
 
@@ -539,6 +556,29 @@ def set_workspace(workspace: Optional[str] = None) -> Path:
     ws.mkdir(parents=True, exist_ok=True)
     _workspace_dir_var.set(ws)
     _bash_cwd_var.set(None)  # Reset CWD tracking for new session
+    # Kill leftover background processes from crashed previous session
+    _old_bg_pids = _bg_pids_var.get()
+    if _old_bg_pids:
+        for _pid in _old_bg_pids:
+            if _HAS_PROCESS_GROUPS:
+                try:
+                    os.killpg(os.getpgid(_pid), signal.SIGKILL)
+                except (ProcessLookupError, OSError):
+                    try:
+                        os.kill(_pid, signal.SIGKILL)
+                    except (ProcessLookupError, OSError):
+                        pass
+            else:
+                try:
+                    os.kill(_pid, signal.SIGKILL)
+                except (ProcessLookupError, OSError):
+                    pass
+            try:
+                os.waitpid(_pid, os.WNOHANG)
+            except ChildProcessError:
+                pass
+        _old_bg_pids.clear()
+    _bg_pids_var.set(None)  # Reset background process tracking
     return ws
 
 
@@ -556,6 +596,15 @@ def get_bash_cwd() -> Path:
     return cwd if cwd is not None else get_workspace()
 
 
+def _get_bg_pids() -> list[int]:
+    """Get background PID list for current context, initializing if needed."""
+    pids = _bg_pids_var.get()
+    if pids is None:
+        pids = []
+        _bg_pids_var.set(pids)
+    return pids
+
+
 def _parse_cwd_from_output(stdout: str) -> tuple[str, Optional[Path]]:
     """Extract CWD from marker in stdout. Returns (clean_output, new_cwd)."""
     marker_idx = stdout.rfind(_CWD_MARKER)  # LAST occurrence
@@ -567,6 +616,91 @@ def _parse_cwd_from_output(stdout: str) -> tuple[str, Optional[Path]]:
     if cwd_line and Path(cwd_line).is_absolute():
         return clean_output, Path(cwd_line)
     return clean_output, None
+
+
+def _kill_process_tree(proc: asyncio.subprocess.Process) -> None:
+    """Kill a process and its entire process group (for timeout scenarios).
+
+    Uses SIGKILL immediately — called when timeout has already expired.
+    Falls back to proc.kill() if process groups not available.
+    """
+    if proc.pid is not None and _HAS_PROCESS_GROUPS:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            return
+        except (ProcessLookupError, OSError):
+            pass
+    # Fallback: kill the process directly
+    try:
+        proc.kill()
+    except ProcessLookupError:
+        pass
+
+
+def _is_process_alive(pid: int) -> bool:
+    """Check if a process is still running."""
+    try:
+        os.kill(pid, 0)  # Signal 0: existence check, no actual signal
+        return True
+    except (ProcessLookupError, OSError):
+        return False
+
+
+async def _kill_process_group_graceful(pid: int) -> None:
+    """Kill a process group: SIGTERM -> wait -> SIGKILL.
+
+    Used for background process cleanup (graceful shutdown).
+    """
+    if not _HAS_PROCESS_GROUPS:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except (ProcessLookupError, OSError):
+            pass
+        return
+
+    try:
+        pgid = os.getpgid(pid)
+    except (ProcessLookupError, OSError):
+        return  # Already dead
+
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except (ProcessLookupError, OSError):
+        return
+
+    deadline = time.monotonic() + _GRACEFUL_KILL_TIMEOUT
+    while time.monotonic() < deadline:
+        try:
+            os.killpg(pgid, 0)  # Check existence
+        except (ProcessLookupError, OSError):
+            return  # Dead
+        await asyncio.sleep(0.1)
+
+    # Force kill
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, OSError):
+        pass
+
+
+async def _cleanup_background_processes() -> None:
+    """Kill all tracked background processes for the current agent context."""
+    bg_pids = _bg_pids_var.get()
+    if not bg_pids:
+        return
+    try:
+        for pid in bg_pids:
+            try:
+                await _kill_process_group_graceful(pid)
+                try:
+                    os.waitpid(pid, os.WNOHANG)
+                except ChildProcessError:
+                    pass
+            except Exception:
+                pass  # Don't let one failure block others
+    finally:
+        bg_pids.clear()
+        _bg_pids_var.set(None)  # Always reset, even if kills failed
 
 
 def capture_args(tool_name: str, **kwargs):
@@ -812,6 +946,7 @@ async def bash(command: str) -> str:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=os.environ.copy(),
+            start_new_session=_HAS_PROCESS_GROUPS,
         )
 
         try:
@@ -820,7 +955,7 @@ async def bash(command: str) -> str:
                 timeout=COMMAND_TIMEOUT_SECONDS,
             )
         except asyncio.TimeoutError:
-            proc.kill()
+            _kill_process_tree(proc)
             await proc.communicate()
             return f"Error: Command timed out after {COMMAND_TIMEOUT_SECONDS}s: {command}"
 
@@ -849,6 +984,71 @@ async def bash(command: str) -> str:
 
     except Exception as e:
         return f"Error executing command: {str(e)}"
+
+
+@function_tool
+async def bash_background(command: str) -> str:
+    """Start a long-running command in the background.
+
+    Returns immediately with PID and output file path.
+    Use read_file on the output file to check progress.
+    Use bash("kill <PID>") to stop it.
+    Background processes are automatically cleaned up when the agent finishes.
+
+    Args:
+        command: Shell command to run in the background
+    """
+    capture_args("bash_background", command=command)
+    cwd = get_bash_cwd()
+
+    if not cwd.exists():
+        return f"Error: Workspace directory does not exist: {cwd}"
+
+    bg_pids = _get_bg_pids()
+
+    # Prune dead processes before checking limit
+    bg_pids[:] = [pid for pid in bg_pids if _is_process_alive(pid)]
+    if len(bg_pids) >= MAX_BACKGROUND_PROCESSES:
+        return (
+            f"Error: Maximum {MAX_BACKGROUND_PROCESSES} background processes reached. "
+            f"Kill some first with bash(\"kill <PID>\")."
+        )
+
+    # Create output file in workspace
+    import tempfile
+    fd, output_path = tempfile.mkstemp(
+        prefix=_BG_OUTPUT_PREFIX,
+        suffix=_BG_OUTPUT_SUFFIX,
+        dir=str(cwd),
+    )
+
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            command,
+            cwd=str(cwd),
+            stdout=fd,
+            stderr=asyncio.subprocess.STDOUT,
+            env=os.environ.copy(),
+            start_new_session=_HAS_PROCESS_GROUPS,
+        )
+    except Exception as e:
+        os.close(fd)
+        try:
+            os.unlink(output_path)
+        except OSError:
+            pass
+        return f"Error starting background process: {str(e)}"
+
+    os.close(fd)  # Child inherited fd at fork; close parent's copy
+    bg_pids.append(proc.pid)
+
+    return (
+        f"Background process started.\n"
+        f"PID: {proc.pid}\n"
+        f"Output file: {output_path}\n"
+        f"Use read_file(\"{output_path}\") to check output.\n"
+        f"Use bash(\"kill {proc.pid}\") to stop it."
+    )
 
 
 def search_files_raw(pattern: str, directory: str = ".", file_glob: str = "*") -> str:
@@ -1141,6 +1341,7 @@ def get_nano_agent_tools():
         get_file_info,
         edit_file,
         bash,
+        bash_background,
         search_files,
         run_tests,
         git_status,

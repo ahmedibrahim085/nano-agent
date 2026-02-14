@@ -262,3 +262,81 @@ class TestParseCWD:
         fake_output = f"output\n{_CWD_MARKER}\nrelative/path\n"
         output, cwd = _parse_cwd_from_output(fake_output)
         assert cwd is None, "Relative path should not be accepted as CWD"
+
+
+# ─── Process Group Isolation (Tier 1) ───────────────────────────────────────
+
+
+class TestBashProcessGroups:
+    """Tier 1: Verify process-group isolation prevents orphan processes."""
+
+    def test_has_process_groups_flag(self):
+        """_HAS_PROCESS_GROUPS should be True on macOS/Linux."""
+        import sys
+        from nano_agent.modules.nano_agent_tools import _HAS_PROCESS_GROUPS
+        if sys.platform in ("linux", "darwin"):
+            assert _HAS_PROCESS_GROUPS is True
+        # On Windows, it should be False (not tested here)
+
+    @pytest.mark.asyncio
+    async def test_kill_process_tree_kills_group(self):
+        """_kill_process_tree should kill entire process group."""
+        import os
+        import signal
+        from nano_agent.modules.nano_agent_tools import _kill_process_tree, _HAS_PROCESS_GROUPS
+
+        if not _HAS_PROCESS_GROUPS:
+            pytest.skip("Process groups not available on this platform")
+
+        # Start a subprocess that spawns a child
+        proc = await asyncio.create_subprocess_shell(
+            "sleep 60 & sleep 60",
+            start_new_session=True,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await asyncio.sleep(0.3)  # Let children spawn
+
+        pgid = os.getpgid(proc.pid)
+        _kill_process_tree(proc)
+        await asyncio.sleep(0.3)  # Let signals propagate
+
+        # Verify the entire group is dead
+        with pytest.raises(ProcessLookupError):
+            os.killpg(pgid, 0)
+
+    @pytest.mark.asyncio
+    async def test_kill_process_tree_handles_dead_process(self):
+        """_kill_process_tree should not crash for already-dead process."""
+        from nano_agent.modules.nano_agent_tools import _kill_process_tree
+
+        proc = await asyncio.create_subprocess_shell(
+            "true",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await proc.communicate()  # Wait for it to finish
+
+        # Should not raise
+        _kill_process_tree(proc)
+
+    @pytest.mark.asyncio
+    async def test_bash_start_new_session(self):
+        """bash subprocess should be in its own process group."""
+        import os
+        from nano_agent.modules.nano_agent_tools import set_workspace, _HAS_PROCESS_GROUPS
+
+        if not _HAS_PROCESS_GROUPS:
+            pytest.skip("Process groups not available on this platform")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            set_workspace(tmpdir)
+            # Run a command that outputs its own process group ID
+            result = await _call_bash("python3 -c \"import os; print(os.getpgid(os.getpid()))\"")
+            # The process group ID should differ from our own
+            lines = result.strip().split('\n')
+            pgid_line = lines[0].strip()
+            if pgid_line.isdigit():
+                child_pgid = int(pgid_line)
+                our_pgid = os.getpgid(os.getpid())
+                assert child_pgid != our_pgid, "Child should be in its own process group"

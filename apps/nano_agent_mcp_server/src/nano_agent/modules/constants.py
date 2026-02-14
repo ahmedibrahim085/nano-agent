@@ -199,6 +199,7 @@ TOOL_GIT_STATUS = "git_status"
 TOOL_GIT_COMMIT = "git_commit"
 TOOL_GIT_BRANCH = "git_branch"
 TOOL_GIT_DIFF = "git_diff"
+TOOL_BASH_BACKGROUND = "bash_background"
 
 # Available Tools List
 AVAILABLE_TOOLS = [
@@ -214,6 +215,7 @@ AVAILABLE_TOOLS = [
     TOOL_GIT_COMMIT,
     TOOL_GIT_BRANCH,
     TOOL_GIT_DIFF,
+    TOOL_BASH_BACKGROUND,
 ]
 
 # Demo Configuration
@@ -242,8 +244,9 @@ NANO_AGENT_SYSTEM_PROMPT = """You are an autonomous coding agent that can read, 
 - git_commit(message) — Commit staged changes with a message
 - git_branch(name) — Create and switch to a new branch, or list all branches if name is empty
 - git_diff(ref) — Show changes: unstaged + staged if no ref, or diff against a ref
+- bash_background(command) — Start a long-running command in the background. Returns PID and output file. Use read_file on the output file to check progress, or bash("kill <PID>") to stop it.
 
-You have ONLY these 12 tools. Do NOT call any other tool name.
+You have ONLY these 13 tools. Do NOT call any other tool name.
 
 ## Workflow
 1. PLAN: Break the task into concrete steps
@@ -254,6 +257,7 @@ You have ONLY these 12 tools. Do NOT call any other tool name.
 ## Rules
 - Always read a file before editing it (to get exact text for old_str)
 - Use bash for: installing dependencies, building projects, chained commands (&&, ;, |)
+- Use bash_background for: long-running servers, watch processes, or any command that runs indefinitely
 - Use the git tools (git_status, git_commit, git_branch, git_diff) for git operations
 - Use run_tests for running test suites (preferred over bash for tests)
 - Use search_files for finding code patterns (preferred over bash with grep)

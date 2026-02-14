@@ -276,11 +276,11 @@ class TestGetModelSettings:
         assert ms.max_tokens == 100000
 
     def test_get_model_settings_gpt5_mini(self):
-        """GPT-5-mini gets temperature=0.2 and max_tokens=32000."""
+        """GPT-5-mini: temperature not set (supports_temperature=False), max_tokens=32000."""
         from nano_agent.modules.provider_config import ProviderConfig
 
         ms = ProviderConfig.get_model_settings("gpt-5-mini", "openai")
-        assert ms.temperature == 0.2
+        assert ms.temperature is None  # Not set — GPT-5 family rejects temperature
         assert ms.max_tokens == 32000
 
     def test_get_model_settings_unknown_model_uses_defaults(self):

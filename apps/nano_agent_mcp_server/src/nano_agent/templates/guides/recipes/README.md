@@ -12,4 +12,11 @@ This directory contains practical, copy-pasteable recipes for common nano-agent 
 | [04-launch-agent-identity](./04-launch-agent-identity.md) | Persistent agent behavior with AGENT.md |
 | [05-skill-quick-dispatch](./05-skill-quick-dispatch.md) | Quick dispatch via slash command |
 
-Each recipe includes step-by-step instructions and actual code examples with YOUR_MODEL/YOUR_PROVIDER placeholders.
+Each recipe uses `YOUR_MODEL`/`YOUR_PROVIDER` placeholders — replace with your preferred model and provider.
+
+## Related Guides
+
+- [When to Use What](../when-to-use-what.md) — Decision guide for choosing the right mechanism
+- [Installation Guide](../installation.md) — Where to put each template file
+- [Multi-Instance Guide](../multi-instance.md) — Running multiple agents without collisions
+- [Team Patterns](../team-patterns.md) — Ready-to-use team compositions

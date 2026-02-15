@@ -1,141 +1,124 @@
 # Recipe 01: MCP Direct Dispatch
 
-Dispatch a self-contained task to a specific external LLM using `prompt_nano_agent`. Best for single-round tasks where you control the model selection.
+Dispatch a self-contained task to any external LLM using `prompt_nano_agent`. Best for single-round tasks where you control model selection.
 
 ## Use Case
 
 Use this when:
-- You need a specific external LLM (not YOUR_MODEL)
+- You need a specific external LLM (not Claude Code itself)
 - The task is self-contained (no multi-turn needed)
 - You want direct control over model/provider
-- Cost transparency is important
+- Cost transparency is important (free for local models)
 
 ## Steps
 
 ### 1. Check Available Providers
 
-First, verify which providers/models are available:
+First, verify which providers and models are available:
 
-```python
-# In your MCP client or CLI
-!check_providers()
+```
+mcp__nano-agent__check_providers()
 ```
 
-Expected output shows available models like `openai/gpt-4o`, `anthropic/claude-3-5-sonnet`, etc.
+Returns a dictionary with each provider's status, available models, and latency.
 
-### 2. Dispatch with Detailed Prompt
+### 2. Dispatch a Task
 
-Use `prompt_nano_agent` with explicit instructions and YOUR_MODEL/YOUR_PROVIDER:
+Use `prompt_nano_agent` with a detailed prompt:
 
-```python
-response = prompt_nano_agent(
-    model="YOUR_MODEL",  # e.g., "openai/gpt-4o" or "anthropic/claude-3-5-sonnet"
-    provider="YOUR_PROVIDER",  # e.g., "openai" or "anthropic"
-    prompt="""
-You are a senior Python developer. Analyze the following code file and identify:
-1. Any security vulnerabilities
-2. Performance optimization opportunities
-3. Code style issues per PEP 8
-
-File to analyze: src/utils/helper.py
-
-Return a structured report with:
-- List of vulnerabilities (high/medium/critical)
-- Performance suggestions with reasoning
-- Style corrections
-""",
-    context={
-        "file_path": "/path/to/your/file.py",
-        "additional_instructions": "Focus on security first"
-    }
+```
+mcp__nano-agent__prompt_nano_agent(
+  agentic_prompt="You are a senior Python developer. Analyze src/utils/helper.py and identify:
+    1. Security vulnerabilities
+    2. Performance optimization opportunities
+    3. Code style issues per PEP 8
+    Return a structured report with severity ratings.",
+  model="YOUR_MODEL",
+  provider="YOUR_PROVIDER",
+  workspace="/path/to/project"
 )
 ```
 
-### 3. Verify Output
+**Parameters:**
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `agentic_prompt` | Yes | Natural language task description |
+| `model` | No | Model name (defaults to server config) |
+| `provider` | No | Provider name: `openai`, `anthropic`, `ollama`, `lmstudio`, `zai`, `qwen` |
+| `workspace` | No | Working directory for file operations (defaults to cwd) |
 
-Check the response structure:
+### 3. Read the Response
 
-```python
-if response.status == "success":
-    print(response.content)
-else:
-    print(f"Error: {response.error}")
+The tool returns a `Dict[str, Any]` with these keys:
+
+```json
+{
+  "success": true,
+  "result": "Created report.md with 3 vulnerabilities found...",
+  "error": null,
+  "metadata": { "model": "YOUR_MODEL", "provider": "YOUR_PROVIDER" },
+  "execution_time_seconds": 12.5
+}
 ```
 
-## Example: Implement Utility Function
+Check `success` first. If `false`, read `error` for details.
 
-**Scenario**: You need a utility function implemented in TypeScript.
+## Example: Implement a Utility Function
 
-```python
-result = prompt_nano_agent(
-    model="openai/gpt-4o",
-    provider="openai",
-    prompt="""
-Implement a TypeScript utility function for debouncing:
+**Scenario**: You need a TypeScript utility function implemented by an external LLM.
 
-Function signature: 
-```typescript
-function debounce<T extends (...args: any[]) => any>(
-  func: T,
-  wait: number
-): T
 ```
+mcp__nano-agent__prompt_nano_agent(
+  agentic_prompt="Implement a TypeScript debounce utility function in src/utils/debounce.ts.
 
-Requirements:
-1. Use setTimeout and clearTimeout
-2. Support leading/trailing edge execution
-3. Return cancel function to prevent invocation
-4. Include JSDoc comments
-
-Place in: src/utils/debounce.ts
-""",
-    context={
-        "target_file": "src/utils/debounce.ts",
-        "existing_code": None
-    }
+    Requirements:
+    1. Generic type signature: debounce<T extends (...args: any[]) => any>(func: T, wait: number): T
+    2. Use setTimeout and clearTimeout
+    3. Support leading/trailing edge execution
+    4. Return cancel function
+    5. Include JSDoc comments",
+  model="YOUR_MODEL",
+  provider="YOUR_PROVIDER",
+  workspace="/path/to/project"
 )
 ```
 
-## Example: Analyze File
+The agent will read existing files, create `src/utils/debounce.ts`, and verify it compiles.
+
+## Example: Code Review
 
 **Scenario**: Review a Python file for best practices.
 
-```python
-analysis = prompt_nano_agent(
-    model="anthropic/claude-3-5-sonnet",
-    provider="anthropic",
-    prompt="""
-Review this Python file for:
-1. Type safety issues (missing type hints)
-2. Error handling gaps
-3. Potential bugs
+```
+mcp__nano-agent__prompt_nano_agent(
+  agentic_prompt="Review src/main.py for:
+    1. Type safety issues (missing type hints)
+    2. Error handling gaps
+    3. Potential bugs
 
-File content:
-{file_content}
+    Return findings in this format:
+    ## Issues Found
+    - [Critical/Warning/Info] Issue description
 
-Return your findings in this format:
-## Issues Found
-- [Critical/Warning/Info] Issue description
-
-## Suggested Fixes
-1. Fix for issue 1
-2. Fix for issue 2
-""",
-    context={
-        "file_content": open("src/main.py").read()
-    }
+    ## Suggested Fixes
+    1. Fix for issue 1
+    2. Fix for issue 2",
+  model="YOUR_MODEL",
+  provider="YOUR_PROVIDER",
+  workspace="/path/to/project"
 )
 ```
 
 ## Important Notes
 
-- **Cost**: Free for local models, pay-per-token for cloud providers
-- **Latency**: Single roundtrip = fastest option
-- **No Context Persistence**: Each call is independent; embed all needed context in prompt
-- **Model Selection**: Always specify both `model` and `provider` explicitly
+- **Stateless**: Each call is independent — embed all needed context in the prompt
+- **File access**: The agent has 13 tools (read/write/edit files, bash, git, etc.) within the workspace
+- **Cost**: Free for local models (Ollama, LM Studio), pay-per-token for cloud providers
+- **Latency**: Single roundtrip — fastest execution mechanism
+- **No `context` parameter**: All context goes in `agentic_prompt` (or write to a file and tell the agent to read it)
 
 ## When NOT to Use This Recipe
 
-- For multi-turn conversations → use Teammate or launch_agent
-- For consistent agent identity across tasks → use launch_agent with AGENT.md
-- For background processing → use Background Bash or Background Agent
+- For multi-turn conversations with persistent identity → use `launch_agent` (Recipe 04)
+- For Claude Code subagent collaboration → use Teammate (Recipe 02)
+- For shell commands without AI → use Background Bash (Recipe 03)

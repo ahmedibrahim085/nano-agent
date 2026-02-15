@@ -1,241 +1,182 @@
 # Recipe 05: Skill Quick Dispatch
 
-Quickly dispatch tasks via slash commands. Create reusable skills for frequent patterns like "review this function" or "analyze this error". Ideal when you want to invoke common AI tasks with a single command.
+Create a reusable Claude Code skill that dispatches tasks to external LLMs via nano-agent. Invoke it with a slash command like `/nano-dispatch`. Ideal for frequent one-off patterns like "review this function" or "analyze this error".
 
 ## Use Case
 
 Use this when:
-- You frequently dispatch the same type of task
-- You want a one-click solution for common AI operations
-- You need to share dispatch patterns with your team
+- You frequently dispatch the same type of task to external LLMs
+- You want a one-command solution for common AI operations
+- You want to share dispatch patterns with your team
 - You want convenience over full control
+
+## How It Works
+
+Claude Code skills are `.md` files in `~/.claude/skills/{skill-name}/SKILL.md` (global) or `.claude/skills/{skill-name}/SKILL.md` (project). Claude Code auto-discovers them and makes them available as `/skill-name` slash commands.
 
 ## Steps
 
-### 1. Create Skill Template
+### 1. Create the Skill Directory
 
 ```bash
-# Navigate to skills directory (usually in project root)
-mkdir -p .nano-agent/skills
-
-# Create skill file
-touch .nano-agent/skills/review_function.md
+mkdir -p ~/.claude/skills/nano-dispatch
 ```
 
-### 2. Customize SKILL.md
+### 2. Write the SKILL.md File
 
-Create `SKILL.md` with template:
+Create `~/.claude/skills/nano-dispatch/SKILL.md`:
 
 ```markdown
-# Skill: Review Function
+# Skill: Nano Dispatch
 
-**Description**: Analyze a code function for issues and improvements.
+Quick dispatch for one-off tasks to an external LLM via nano-agent.
 
-**Model**: YOUR_MODEL
-**Provider**: YOUR_PROVIDER
+## Usage
+/nano-dispatch <task description>
 
-## Instructions to AI
-You are a senior code reviewer. Review the provided function for:
-1. Security vulnerabilities
-2. Performance issues  
-3. Code quality
-4. Edge cases
+## Instructions
 
-## Input Format
-```
-<function_code>
-```
+When the user invokes this skill:
 
-## Output Format
-### Issues Found
-- [Severity] Issue: Description
+1. Take the user's task description from the arguments
+2. Dispatch it to an external LLM using:
 
-### Suggested Fixes
-1. Fix description
+mcp__nano-agent__prompt_nano_agent(
+  agentic_prompt="<user's task description>",
+  model="YOUR_MODEL",
+  provider="YOUR_PROVIDER",
+  workspace="<current project directory>"
+)
 
-### Overall Rating
-A+/B/C/D/F
-```
+3. Report the result back to the user
 
-### 3. Install the Skill
-
-```bash
-# If using CLI
-nano-agent skill install ./.nano-agent/skills/review_function.md
-
-# Or reference directly via path
+## Notes
+- Replace YOUR_MODEL and YOUR_PROVIDER with your preferred model/provider
+- The agent has file access within the workspace (read, write, edit, bash, git)
+- Each dispatch is stateless — include all context in the prompt
 ```
 
-### 4. Invoke Skill via Slash Command
+### 3. Use the Skill
+
+After creating the file, invoke it in Claude Code:
+
+```
+/nano-dispatch Review src/auth/middleware.py for security vulnerabilities
+```
+
+Claude Code reads the SKILL.md instructions and dispatches accordingly.
+
+## Example: Code Review Skill
+
+`~/.claude/skills/nano-review/SKILL.md`:
 
 ```markdown
-/nano-dispatch review_function "Please review this function for security issues"
+# Skill: Nano Review
 
-Function:
-```
-def authenticate_user(username, password):
-    query = f"SELECT * FROM users WHERE username='{username}' AND password='{password}'"
-    return execute_query(query)
-```
-```
+Dispatch a code review to an external LLM.
 
-The AI will respond using your skill's instructions and model.
+## Usage
+/nano-review <file or directory path>
 
-## Example: Error Analyzer Skill
+## Instructions
 
-**SKILL.md content:**
+When invoked:
 
-```markdown
-# Skill: Analyze Error
+1. Read the target file/directory path from arguments
+2. Dispatch a review:
 
-**Description**: Analyze error messages and suggest fixes.
+mcp__nano-agent__launch_agent(
+  agentic_prompt="Review all files at <path> for:
+    1. Security vulnerabilities
+    2. Performance issues
+    3. Code quality and maintainability
+    Return findings by severity with file:line references.",
+  agent_path="/path/to/agents/code-reviewer",
+  model="YOUR_MODEL",
+  provider="YOUR_PROVIDER",
+  workspace="<current project directory>"
+)
 
-**Model**: YOUR_MODEL
-**Provider**: YOUR_PROVIDER
-
-## Instructions to AI
-You are an expert debugging assistant. Given an error, identify:
-1. Root cause
-2. Likely triggers
-3. Concrete fix steps
-
-## Input Format
-Error message:
-```
-<error_output>
-```
-
-Code context (optional):
-```
-<code_snippet>
-```
-
-## Output Format
-### Root Cause
-[Explanation]
-
-### How to Reproduce
-[Steps]
-
-### Fix Steps
-1. First action
-2. Second action
-
-### Code Example
-```language
-<fixed_code>
-```
+3. Present the review findings to the user
 ```
 
 ## Example: Test Generator Skill
 
-**SKILL.md content:**
+`~/.claude/skills/nano-test/SKILL.md`:
 
 ```markdown
-# Skill: Generate Tests
+# Skill: Nano Test
 
-**Description**: Create comprehensive unit tests for a function.
+Generate unit tests for a function or file using an external LLM.
 
-**Model**: YOUR_MODEL  
-**Provider**: YOUR_PROVIDER
+## Usage
+/nano-test <file path>
 
-## Instructions to AI
-You are a test-driven development expert. Generate tests that:
-1. Cover normal, edge, and error cases
-2. Use parametrize for multiple inputs
-3. Include assertions for side effects
+## Instructions
 
-## Input Format
-Function:
-```
-<function_code>
-```
+When invoked:
 
-Testing framework: <framework_name>
+1. Read the target file path from arguments
+2. Dispatch test generation:
 
-## Output Format
-```python
-# Test file content
-import pytest
+mcp__nano-agent__prompt_nano_agent(
+  agentic_prompt="Read <file path> and generate comprehensive unit tests.
+    Cover normal cases, edge cases, and error conditions.
+    Use the project's testing framework.
+    Write tests to tests/ directory following existing conventions.",
+  model="YOUR_MODEL",
+  provider="YOUR_PROVIDER",
+  workspace="<current project directory>"
+)
 
-<test_code_here>
-```
+3. Report which test files were created
 ```
 
-## Example: Code Documentation Skill
+## Example: Error Analyzer Skill
 
-**SKILL.md content:**
+`~/.claude/skills/nano-debug/SKILL.md`:
 
 ```markdown
-# Skill: Document Function  
+# Skill: Nano Debug
 
-**Description**: Add comprehensive docstrings to functions.
+Analyze an error message using an external LLM.
 
-**Model**: YOUR_MODEL
-**Provider**: YOUR_PROVIDER
+## Usage
+/nano-debug <error message or description>
 
-## Instructions to AI
-Add docstrings following Google Python style. Include:
-- Brief description
-- Args section with types
-- Returns section
-- Raises section (if applicable)
+## Instructions
 
-## Input Format
-Function to document:
-```
-<function_code>
-```
+When invoked:
 
-## Output Format
-Only return the function with docstring added:
-```python
-<function_with_docstring>
-```
+1. Take the error description from arguments
+2. Dispatch analysis:
+
+mcp__nano-agent__prompt_nano_agent(
+  agentic_prompt="Analyze this error and suggest fixes:
+    <error description>
+
+    Check the codebase for the root cause. Provide:
+    1. Root cause explanation
+    2. Exact file and line causing the issue
+    3. Concrete fix with code",
+  model="YOUR_MODEL",
+  provider="YOUR_PROVIDER",
+  workspace="<current project directory>"
+)
+
+3. Present the diagnosis and fix to the user
 ```
 
 ## Important Notes
 
-- **Cost**: Depends on underlying model (free for local)
-- **Latency**: Fast - no setup overhead
-- **Reusability**: Skills can be shared across team members
-- **Customization**: Each skill uses YOUR_MODEL/YOUR_PROVIDER
-
-## Multiple Skills Workflow
-
-```bash
-# List installed skills
-nano-agent skill list
-
-# Update a skill
-nano-agent skill update review_function
-
-# Remove a skill  
-nano-agent skill remove old_skill
-```
+- **No CLI install command**: Skills are just files — copy the SKILL.md to the right directory
+- **Skill paths**: `~/.claude/skills/{name}/SKILL.md` (global) or `.claude/skills/{name}/SKILL.md` (project-local)
+- **Auto-discovery**: Claude Code finds skills automatically from these standard directories
+- **Cost**: Depends on the target model (free for local, pay-per-token for cloud)
+- **Customization**: Edit YOUR_MODEL/YOUR_PROVIDER in each SKILL.md to match your setup
 
 ## When NOT to Use This Recipe
 
-- For one-time unique tasks with no reuse potential → use `prompt_nano_agent` directly
-- When you need full control over context → manual dispatch is better
-- For complex multi-step workflows → use Teammate or launch_agent
-
-## Template for New Skills
-
-```markdown
-# Skill: YOUR_SKILL_NAME
-
-**Description**: SHORT_DESCRIPTION
-
-**Model**: YOUR_MODEL  
-**Provider**: YOUR_PROVIDER
-
-## Instructions to AI
-[Your AI instructions here]
-
-## Input Format
-[How users provide input]
-
-## Output Format
-[Expected output structure]
-```
+- For one-time unique tasks with no reuse potential → use `prompt_nano_agent` directly (Recipe 01)
+- For complex multi-step workflows → use Teammate (Recipe 02) or `launch_agent` (Recipe 04)
+- When you need full control over parameters each time → manual MCP tool call is better

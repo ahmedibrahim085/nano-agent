@@ -20,14 +20,23 @@ AGENT.md files are simpler than Claude Code agent templates:
 - **Role-focused** — Only define persona, approach, and behavioral guidelines
 - **Portable** — Can be stored anywhere and referenced via `agent_path`
 
-## Installation
+## Storage: Flexible Location
 
-1. Copy this entire directory to your desired location
-2. When launching an agent, set `agent_path` to point to a specific identity directory:
-   - `agent_path: "/path/to/general-coder"` for general coding tasks
-   - `agent_path: "/path/to/code-reviewer"` for code review sessions
-   - `agent_path: "/path/to/tdd-engineer"` for test-driven development
-   - `agent_path: "/path/to/backend-expert"` for backend development
+Unlike Claude Code agent templates (which must be in `~/.claude/agents/` or `.claude/agents/`), **AGENT.md identity files can live anywhere on your filesystem**. You pass the directory path to `launch_agent` via the `agent_path` parameter:
+
+```
+mcp__nano-agent__launch_agent(
+  agentic_prompt="Review this codebase for security issues",
+  agent_path="/any/path/to/your/agent-directory",
+  model="YOUR_MODEL",
+  provider="YOUR_PROVIDER"
+)
+```
+
+Common locations:
+- `~/agents/` — personal agent identities
+- `/path/to/project/agents/` — project-specific identities
+- Anywhere you prefer — no standard location required
 
 ## Available Templates
 
@@ -51,3 +60,9 @@ Backend development specialist focusing on API design, database modeling, input 
 - **Duplicate constraints**: Don't repeat what's in the base prompt
 
 AGENT.md files should only add role-specific personality, workflow preferences, and domain expertise on top of the foundation already provided.
+
+## See Also
+
+- [Installation Guide](../guides/installation.md) — Where all template types go
+- [Recipe 04](../guides/recipes/04-launch-agent-identity.md) — Step-by-step launch_agent usage
+- [Multi-Instance Guide](../guides/multi-instance.md) — Running multiple agents

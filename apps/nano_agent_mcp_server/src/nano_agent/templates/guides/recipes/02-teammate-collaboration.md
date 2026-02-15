@@ -8,216 +8,161 @@ Use this when:
 - Multiple AI agents need to collaborate on a task
 - Different specializations are required (e.g., architect + implementer + reviewer)
 - Rich back-and-forth conversation is needed
-- You want Claude Code's native subagent support
+- You want Claude Code's native team coordination
+
+## Key Concepts
+
+- **TeamCreate**: Creates a team with a shared task list
+- **Task (subagent)**: Spawns a teammate that joins the team
+- **SendMessage**: Sends messages between teammates
+- **TaskCreate/TaskUpdate**: Coordinates work via shared task list
+- **Nano-agent MCP tools**: Dispatches work to external LLMs from within teammates
 
 ## Steps
 
-### 1. Create Team with Lead Agent
+### 1. Create the Team
 
-```python
-from nano_agent import create_team
-
-# Define team roles and expertise
-team = create_team(
-    name="feature_implementation",
-    description="Lead agent coordinating implementation and review",
-    members=[
-        {
-            "name": "architect",
-            "role": "System Architect",
-            "instructions": "Design system architecture and component interactions"
-        },
-        {
-            "name": "implementer",
-            "role": "Senior Developer",
-            "instructions": "Implement code following architectural guidelines"
-        },
-        {
-            "name": "reviewer",
-            "role": "Code Reviewer",
-            "instructions": "Review code for quality, security, and maintainability"
-        }
-    ]
+```
+TeamCreate(
+  team_name="feature-impl",
+  description="Implement and review the user management API"
 )
 ```
 
-### 2. Spawn Teammates with Specialized Instructions
+This creates a team with a shared task list. You (the lead) coordinate the work.
 
-Use the `Task` tool to spawn teammates with specific goals:
+### 2. Create Tasks for the Team
 
-```python
-# Spawn architect
-architect_task = Task(
-    team_name="feature_implementation",
-    agent_name="architect",
-    goal="Design the architecture for the new feature",
-    context={
-        "requirements": "Build a REST API for user management",
-        "constraints": ["Use async/await", "Support pagination"]
-    }
+```
+TaskCreate(
+  subject="Design user management API architecture",
+  description="Define endpoints, data models, and error handling strategy for the user management API",
+  activeForm="Designing API architecture"
 )
 
-# Spawn implementer
-implementer_task = Task(
-    team_name="feature_implementation",
-    agent_name="implementer",
-    goal="Implement the user management API",
-    context={
-        "architecture": architect_task.result,
-        "framework": "fastapi"
-    }
+TaskCreate(
+  subject="Implement user management API",
+  description="Implement the endpoints based on the architecture design",
+  activeForm="Implementing API"
+)
+
+TaskCreate(
+  subject="Review implementation for security and quality",
+  description="Review the implemented code for security vulnerabilities, error handling, and code quality",
+  activeForm="Reviewing implementation"
 )
 ```
 
-### 3. Dispatch to External LLM
+### 3. Spawn Teammates
 
-Each teammate can use YOUR_MODEL/YOUR_PROVIDER:
+Spawn teammates using the `Task` tool with a `team_name`. Each teammate is a Claude Code subagent:
 
-```python
-# Lead agent coordinates and can dispatch to external models
-result = lead_agent.dispatch(
-    model="YOUR_MODEL",
-    provider="YOUR_PROVIDER",
-    prompt="""
-You are the lead architect. Review the implementer's code and:
-1. Check alignment with architecture
-2. Identify potential issues
-3. Suggest improvements
+```
+Task(
+  subagent_type="general-purpose",
+  team_name="feature-impl",
+  name="architect",
+  prompt="You are the system architect. Check the task list, claim your task, and design the API architecture."
+)
 
-Return:
-- Approval status (approve/reject/revise)
-- Specific feedback items
-- Estimated effort for any requested changes
-""",
-    context={
-        "code": implementer_task.result,
-        "architecture_doc": architecture_result
-    }
+Task(
+  subagent_type="general-purpose",
+  team_name="feature-impl",
+  name="implementer",
+  prompt="You are the implementer. Check the task list, claim your task once the architecture is ready, and implement the API."
 )
 ```
 
-### 4. Review and Iterate
+### 4. Teammates Dispatch to External LLMs
 
-Collect results and iterate:
+Inside a teammate, dispatch coding work to an external LLM via nano-agent:
 
-```python
-# Reviewer analyzes all work
-review = Task(
-    team_name="feature_implementation",
-    agent_name="reviewer",
-    goal="Final review of all deliverables",
-    context={
-        "code": implementer_task.result,
-        "feedback": result.content
-    }
+```
+mcp__nano-agent__prompt_nano_agent(
+  agentic_prompt="Implement the user CRUD endpoints in src/api/users.py following FastAPI patterns.
+    Read the architecture doc at docs/architecture.md first.",
+  model="YOUR_MODEL",
+  provider="YOUR_PROVIDER",
+  workspace="/path/to/project"
 )
-
-if review.status == "approve":
-    print("Implementation approved!")
-else:
-    # Send back to implementer
-    Task(
-        team_name="feature_implementation",
-        agent_name="implementer",
-        goal="Address review feedback",
-        context={
-            "feedback": review.content,
-            "current_code": implementer_task.result
-        }
-    )
 ```
 
-### 5. Finalize with SendMessage
+### 5. Coordinate via Messages
 
-Use `SendMessage` to communicate team results:
+Teammates communicate using `SendMessage`:
 
-```python
-from nano_agent import SendMessage
+```
+SendMessage(
+  type="message",
+  recipient="implementer",
+  content="Architecture is ready at docs/architecture.md. You can start implementation now.",
+  summary="Architecture design complete"
+)
+```
+
+### 6. Review and Iterate
+
+The reviewer teammate can dispatch a review to an external LLM:
+
+```
+mcp__nano-agent__launch_agent(
+  agentic_prompt="Review all Python files in src/api/ for security issues and code quality",
+  agent_path="/path/to/code-reviewer",
+  model="YOUR_MODEL",
+  provider="YOUR_PROVIDER",
+  workspace="/path/to/project"
+)
+```
+
+### 7. Mark Tasks Complete and Shut Down
+
+```
+TaskUpdate(taskId="3", status="completed")
 
 SendMessage(
-    receiver="user",
-    content=f"""
-## Implementation Complete
-
-- Architecture: {architecture_result}
-- Code: {implementer_task.result}
-- Review Status: {review.status}
-""",
-    attachments={
-        "architectural_design": architecture_doc,
-        "source_code": implementer_task.result_file
-    }
+  type="shutdown_request",
+  recipient="architect",
+  content="All work complete, shutting down"
 )
 ```
 
-## Example: Multi-Model Team
+## Example: Implement + Review Pipeline
 
-**Scenario**: Compare different LLM approaches and select best one.
+**Scenario**: One teammate implements, another reviews.
 
-```python
-# Lead agent with specialized teammates
-team = create_team(
-    name="llm_comparison",
-    description="Compare different LLM approaches for task"
+```
+# 1. Create team
+TeamCreate(team_name="impl-review", description="Implement then review")
+
+# 2. Create tasks
+TaskCreate(subject="Implement auth middleware", description="...", activeForm="Implementing")
+TaskCreate(subject="Review auth middleware", description="...", activeForm="Reviewing")
+
+# 3. Spawn teammates
+Task(
+  subagent_type="general-purpose",
+  team_name="impl-review",
+  name="dev",
+  prompt="Claim the implementation task. Use mcp__nano-agent__prompt_nano_agent to dispatch coding work to YOUR_MODEL on YOUR_PROVIDER."
 )
 
-# Spawn teammates to different models
-model_a = Task(
-    team_name="llm_comparison",
-    agent_name="gpt4_analyst",
-    model="openai/gpt-4o",
-    provider="openai",
-    goal="Analyze task requirements using GPT-4"
-)
-
-model_b = Task(
-    team_name="llm_comparison",
-    agent_name="claude_analyst", 
-    model="anthropic/claude-3-5-sonnet",
-    provider="anthropic",
-    goal="Analyze task requirements using Claude 3.5 Sonnet"
-)
-
-# Lead compares results
-comparison = lead.dispatch(
-    model="openai/gpt-4o",
-    provider="openai",
-    prompt="""
-Compare these two analyses and recommend:
-1. Which model performed better for this task?
-2. Why did it perform better?
-3. Recommended approach for production
-"""
+Task(
+  subagent_type="general-purpose",
+  team_name="impl-review",
+  name="reviewer",
+  prompt="Wait for the implementation task to complete, then claim the review task. Use mcp__nano-agent__launch_agent with a code-reviewer identity."
 )
 ```
 
 ## Important Notes
 
-- **Cost**: Teammate tasks use Claude Code, which is paid
-- **Latency**: Higher due to multiple agents and turns
-- **Context Sharing**: Teammates can access shared context from lead
-- **Team Persistence**: Teams exist for the session unless deleted
+- **Cost**: Teammates use Claude Code (paid); nano-agent dispatch cost depends on target model
+- **Latency**: Higher due to multiple agents and coordination overhead
+- **Team lifecycle**: Teams exist for the session unless deleted with `TeamDelete`
+- **Stateless nano-agents**: Each `prompt_nano_agent` / `launch_agent` call is independent — pass all context in the prompt or via files
 
 ## When NOT to Use This Recipe
 
-- For simple single-round tasks → use `prompt_nano_agent`
-- For background processing → use Background Agent
-- For quick one-off tasks → use Subagent (Task tool)
-- When you only need one agent → launch_agent is simpler
-
-## Template for New Teams
-
-```python
-# Copy and customize this template
-create_team(
-    name="YOUR_TEAM_NAME",
-    description="YOUR_TEAM_DESCRIPTION",
-    members=[
-        {
-            "name": "role_name",
-            "role": "Agent Role Title",
-            "instructions": "Specific instructions for this agent"
-        }
-    ]
-)
-```
+- For simple single-round tasks → use `prompt_nano_agent` directly (Recipe 01)
+- For consistent agent identity without team overhead → use `launch_agent` (Recipe 04)
+- For shell commands without AI → use Background Bash (Recipe 03)

@@ -98,6 +98,24 @@ TEMPLATE_REGISTRY = [
     },
     {
         "category": "guides",
+        "name": "installation.md",
+        "description": "Reference card: where each template file type goes",
+        "mime_type": "text/markdown",
+    },
+    {
+        "category": "guides",
+        "name": "multi-instance.md",
+        "description": "Reference card: running multiple agents without naming collisions",
+        "mime_type": "text/markdown",
+    },
+    {
+        "category": "guides",
+        "name": "team-patterns.md",
+        "description": "Reference card: ready-to-use team compositions",
+        "mime_type": "text/markdown",
+    },
+    {
+        "category": "guides",
         "name": "recipes/README.md",
         "description": "Index of step-by-step recipes for nano-agent workflows",
         "mime_type": "text/markdown",

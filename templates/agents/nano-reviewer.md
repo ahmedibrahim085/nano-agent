@@ -3,6 +3,7 @@ name: nano-reviewer
 description: "Code reviewer that dispatches to external LLMs via nano-agent for independent analysis. Use proactively after code changes or before PRs."
 tools: Read, Grep, Glob, Bash, mcp__nano-agent__prompt_nano_agent, mcp__nano-agent__check_providers
 model: inherit
+memory: user
 ---
 
 # Code Reviewer (nano-agent dispatch)

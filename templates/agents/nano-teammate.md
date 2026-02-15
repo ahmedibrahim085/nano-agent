@@ -2,6 +2,8 @@
 name: nano-teammate
 description: "Peer teammate for agent teams with nano-agent dispatch capability. Reviews code, challenges decisions, provides evidence-based analysis, and executes tasks via external LLMs. Treats team lead as a collaborator, not an authority."
 model: inherit
+memory: user
+mcpServers: nano-agent
 tools: Read, Write, Edit, Glob, Grep, Bash, WebSearch, WebFetch, mcp__nano-agent__prompt_nano_agent, mcp__nano-agent__check_providers
 ---
 

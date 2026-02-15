@@ -4,7 +4,7 @@ Agent templates for Claude Code that dispatch work to external LLMs via the nano
 
 ## What Are These?
 
-These are **starter templates** — not managed agents. Copy one, customize it, and save it where you need it. Each template defines a **role** (what the agent does) independently from the **model** (which LLM it dispatches to).
+These are **starter templates** — not managed agents. Copy one, customize it, and save it where you need it. Each template defines a **role** (what the agent does) independently from the **model** (which LLM it dispatches to). Multiple templates can be installed side by side — each has a unique `name` field and lives in its own file, so they never overwrite each other. The nano-agent project owns the MCP server; agent and skill setup is entirely your domain.
 
 ## Installation
 
@@ -19,6 +19,25 @@ cp templates/agents/nano-reviewer.md ~/.claude/agents/
 ```bash
 cp templates/agents/nano-reviewer.md .claude/agents/
 ```
+
+Rename the file to match your use case (e.g., `cp nano-teammate.md my-zai-peer.md`). The `name` field inside the file — not the filename — is what Claude uses to identify the agent.
+
+### Session-only (not saved to disk)
+
+Pass agent configuration as JSON when launching Claude Code:
+
+```bash
+claude --agents '{
+  "nano-reviewer": {
+    "description": "Code reviewer with nano-agent dispatch",
+    "prompt": "You review code by combining your analysis with an external LLM review via nano-agent...",
+    "tools": ["Read", "Grep", "Glob", "Bash", "mcp__nano-agent__prompt_nano_agent"],
+    "model": "inherit"
+  }
+}'
+```
+
+See the [CLI reference](https://code.claude.com/docs/en/cli-reference) for the full JSON format.
 
 ## Available Templates
 
@@ -87,6 +106,19 @@ Memory scopes: `user` (all projects), `project` (this repo), `local` (this repo,
 
 Agents automatically load `CLAUDE.md` from the project root. For agent-specific context, use the `skills:` frontmatter field to preload skill content.
 
+### Using with agent teams
+
+When spawning a teammate, include task-specific context in the spawn prompt:
+
+```
+Create an agent team. Spawn a nano-teammate with the prompt:
+"Your first task: review the authentication module at src/auth/ for
+security vulnerabilities. Focus on token handling and session management.
+The app uses JWT tokens stored in httpOnly cookies."
+```
+
+Teammates do NOT inherit conversation history from the lead, so include all relevant context in the spawn prompt. They DO automatically load `CLAUDE.md` and configured MCP servers.
+
 ## Advanced Configuration
 
 These frontmatter fields are available but not included in the templates by default:
@@ -101,6 +133,8 @@ These frontmatter fields are available but not included in the templates by defa
 | `mcpServers` | Reference or inline MCP server configs | `mcpServers: nano-agent` |
 
 See the [Claude Code subagents docs](https://code.claude.com/docs/en/sub-agents) for full details.
+
+Any agent template can also run in the background via Ctrl+B during execution. Note: MCP tools (including nano-agent dispatch) are not available in background subagents — use foreground execution for dispatch-dependent workflows.
 
 ## Prerequisites
 
@@ -118,6 +152,11 @@ The nano-agent MCP server must be registered in your Claude Code settings (`~/.c
 ```
 
 Verify with: `nano-agent --help` or ask Claude to use the `check_providers` tool.
+
+The nano-agent MCP server provides 3 tools:
+- `prompt_nano_agent` — dispatch a task to any supported model
+- `launch_agent` — deploy an agent with an identity file (AGENT.md)
+- `check_providers` — health check all configured providers
 
 ## Troubleshooting
 

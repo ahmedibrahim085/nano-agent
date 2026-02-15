@@ -296,3 +296,23 @@ SUCCESS_AGENT_COMPLETE = "Agent completed successfully in {:.2f}s"
 
 # Version Info
 VERSION = "1.0.0"
+
+# MCP Server Instructions (abbreviated guide for Claude Code sessions)
+MCP_SERVER_INSTRUCTIONS = """
+nano-agent: Dispatch tasks to external LLMs (OpenAI, Anthropic, Ollama, LM Studio, Z.ai, Qwen).
+
+Tools:
+- prompt_nano_agent: Send a task to any model/provider
+- launch_agent: Send a task with a persistent AGENT.md identity
+- check_providers: Health check all configured providers
+
+When to use nano-agent vs other mechanisms:
+- prompt_nano_agent: Self-contained tasks on a specific model (cheap/free for local models)
+- launch_agent: Consistent agent behavior across tasks (reads AGENT.md identity file)
+- Teammate: Ongoing collaboration requiring multiple back-and-forth exchanges
+- Subagent: Quick focused tasks needing immediate results
+- Background Bash: Long-running shell commands (no AI reasoning needed)
+
+Resources: Agent, skill, and identity templates available via MCP resources.
+Read nano-agent://templates/index for a full listing.
+"""

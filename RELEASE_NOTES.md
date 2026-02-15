@@ -4,6 +4,145 @@ Newest releases first. Each release separated by `---`.
 
 ---
 
+# Release: Agent Templates & MCP Resource Discovery
+
+**Branch**: `feat/agent-templates`
+**Base**: `main` (post bash-background merge)
+**Date**: 2026-02-15
+**Commits**: 9 | **Files changed**: 33 | **+3,074 / -348 lines**
+
+## Summary
+
+Adds a complete template system for nano-agent: 20 ready-to-use templates (agents, skills, agent identities, guides) packaged inside the `nano-agent` Python package, discoverable via MCP resource URIs (`nano-agent://templates/`), and backed by a manifest-based integrity test suite. Also fixes 25 previously-failing integration tests by migrating to auto-detected local Ollama models.
+
+## What Changed
+
+### Template System (20 templates)
+
+**Agent Templates** (`templates/agents/`) — Claude Code agent files, copy to `~/.claude/agents/` or `.claude/agents/`:
+
+| Template | Purpose |
+|----------|---------|
+| `nano-reviewer.md` | Code reviewer that dispatches analysis to an external LLM |
+| `nano-researcher.md` | Codebase researcher with external LLM analysis |
+| `nano-implementer.md` | Code implementer that dispatches coding work to an external LLM |
+| `nano-teammate.md` | Peer teammate for multi-agent collaboration |
+
+**Skill Templates** (`templates/skills/`):
+| Template | Purpose |
+|----------|---------|
+| `nano-dispatch/SKILL.md` | Quick dispatch skill for one-off tasks via `/nano-dispatch` |
+
+**Agent Identity Templates** (`templates/agent-identities/`) — AGENT.md files for `launch_agent`:
+
+| Template | Purpose |
+|----------|---------|
+| `general-coder/AGENT.md` | General-purpose coding agent identity |
+| `code-reviewer/AGENT.md` | Code review specialist identity |
+| `tdd-engineer/AGENT.md` | TDD practitioner with RED-GREEN-REFACTOR discipline |
+| `backend-expert/AGENT.md` | Backend development expert identity |
+
+**Guides** (`templates/guides/`) — Documentation and recipes:
+
+| Guide | Purpose |
+|-------|---------|
+| `when-to-use-what.md` | Decision guide: MCP direct vs teammate vs skill vs launch_agent |
+| `installation.md` | Where each file type goes (agents, skills, identities) |
+| `multi-instance.md` | Running multiple teammates without name collision |
+| `team-patterns.md` | 3 ready-to-use team compositions |
+| `recipes/01-mcp-direct-dispatch.md` | Dispatch a task to a specific model |
+| `recipes/02-teammate-collaboration.md` | Multi-agent team collaboration |
+| `recipes/03-background-bash.md` | Run long-running commands in background |
+| `recipes/04-launch-agent-identity.md` | Use launch_agent with AGENT.md identity |
+| `recipes/05-skill-quick-dispatch.md` | Quick dispatch via /nano-dispatch skill |
+
+All templates are **provider-agnostic** — use `YOUR_MODEL`/`YOUR_PROVIDER` placeholders. No hardcoded references to specific LLM providers or models.
+
+### MCP Resource Discovery
+
+All 23 templates (20 files + 3 READMEs) are registered as MCP resources accessible via custom URI scheme:
+
+| URI | Returns |
+|-----|---------|
+| `nano-agent://templates/index` | JSON listing of all templates with descriptions |
+| `nano-agent://templates/{category}/{name}` | Raw markdown content of a specific template |
+
+Resources are registered automatically on MCP server startup via `register_template_resources()`.
+
+### Template Loader Module (`template_resources.py`)
+
+| Function | Purpose |
+|----------|---------|
+| `load_template(category, name)` | Load template content with path traversal protection |
+| `list_all_templates()` | List all registered templates with URIs and descriptions |
+| `register_template_resources(mcp)` | Register all templates as MCP resources on server |
+| `TEMPLATE_REGISTRY` | Manifest of all 23 templates with metadata |
+
+Design decisions:
+- Uses `importlib.resources.files()` — templates are package data, not filesystem paths
+- Path traversal blocked: `..` rejected in name parameter
+- Per-resource error isolation: one bad registration doesn't block others
+- `functools.partial` (not lambda) to avoid late-binding closure bug
+
+### Test Fixes — Ollama Auto-Detection
+
+Created shared `tests/conftest.py` with Ollama auto-detection infrastructure. All integration tests now use the smallest available local model instead of hardcoding `gpt-5-mini`/`openai`.
+
+**Root causes fixed:**
+
+| Issue | Fix |
+|-------|-----|
+| `localhost` resolves to `::1` (IPv6) on macOS, hitting empty Ollama instance | Use `127.0.0.1` exclusively |
+| Tests hardcoded `model="gpt-5-mini", provider="openai"` | `ollama_model` fixture auto-detects smallest available model |
+| GPT-5 production tests asserted success on 404 | Graceful `pytest.skip()` when model unavailable |
+| Invalid `reasoning_effort="minimal"` | Changed to `"none"` (valid values: none, low, medium, high) |
+| Hardcoded author path (`/Users/indydevdan/...`) in test | Replaced with module existence check |
+
+**New fixtures** (`conftest.py`):
+
+| Function/Fixture | Purpose |
+|------------------|---------|
+| `ollama_available()` | Check if Ollama has usable models at `127.0.0.1:11434` |
+| `get_smallest_ollama_model()` | Return smallest available model name, sorted by size |
+| `ollama_model` | Pytest fixture — skips test if no models available |
+| `_NO_TOOL_SUPPORT_FAMILIES` | Filters out gemma3, bert, nomic-bert (no tool support) |
+
+## Test Results
+
+```
+486 passed, 0 failed, 14 skipped
+```
+
+The 14 skipped tests require API keys for external providers (Anthropic, OpenAI) not configured in the test environment. Previously this suite had 25 failures — all now resolved.
+
+## Commits
+
+| # | Hash | Message |
+|---|------|---------|
+| 1 | `a44e36d` | feat: add model-agnostic agent and skill templates for nano-agent |
+| 2 | `99ef8c8` | fix: address 9 template gaps from synthesis cross-reference review |
+| 3 | `f9d188e` | refactor: move templates from repo root into nano-agent package |
+| 4 | `2ba565f` | feat: add 4 AGENT.md identity templates for launch_agent |
+| 5 | `e867341` | feat: add "When to Use What" guide and 5 tested recipes |
+| 6 | `8dc34a5` | feat: add template loader module with full test coverage |
+| 7 | `3fc973f` | feat: register template resources on MCP server |
+| 8 | `9e46993` | fix: correct tool invocation syntax in all recipes and add 3 reference guides |
+| 9 | `5004a9c` | fix: migrate tests to auto-detect Ollama models instead of hardcoding providers |
+
+## Files Changed
+
+| File | Action | Lines |
+|------|--------|-------|
+| `modules/template_resources.py` | NEW | +322 |
+| `tests/test_template_resources.py` | NEW | +103 |
+| `tests/conftest.py` | NEW | +77 |
+| `templates/` (20 template files) | NEW | +2,270 |
+| `__main__.py` | Modified | +29 |
+| `modules/constants.py` | Modified | +20 |
+| `tests/` (4 test files) | Modified | -253/+360 |
+
+---
+
 # Release: Bash Orphan Fix + bash_background Tool (Tier 1+3)
 
 **Branch**: `feat/bash-background`

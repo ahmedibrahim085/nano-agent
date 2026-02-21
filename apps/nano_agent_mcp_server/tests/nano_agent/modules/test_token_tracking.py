@@ -28,8 +28,8 @@ class TestTokenTracker:
         """Test tracker initialization with different models."""
         # Default initialization
         tracker = TokenTracker()
-        assert tracker.model == "gpt-5-mini"
-        assert tracker.provider == "openai"
+        assert tracker.model == "glm-5"
+        assert tracker.provider == "zai"
         assert tracker.total_usage.total_tokens == 0
         
         # Custom model

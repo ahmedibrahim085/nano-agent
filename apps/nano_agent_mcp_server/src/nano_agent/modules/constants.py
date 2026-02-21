@@ -8,8 +8,8 @@ used across the nano agent codebase.
 from .data_types import ModelCapability
 
 # Default Model Configuration
-DEFAULT_MODEL = "gpt-5-mini"  # Efficient, fast, good for most tasks
-DEFAULT_PROVIDER = "openai"
+DEFAULT_MODEL = "glm-5"  # Z.ai frontier reasoning model (744B MoE)
+DEFAULT_PROVIDER = "zai"
 
 # Available Models by Provider
 AVAILABLE_MODELS = {

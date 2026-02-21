@@ -228,7 +228,7 @@ class TokenUsageReport:
 class TokenTracker:
     """Tracks token usage and calculates costs."""
     
-    def __init__(self, model: str = "gpt-5-mini", provider: str = "openai"):
+    def __init__(self, model: str = "glm-5", provider: str = "zai"):
         """Initialize token tracker.
         
         Args:

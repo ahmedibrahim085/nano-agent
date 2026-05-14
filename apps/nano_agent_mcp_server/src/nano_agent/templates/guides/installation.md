@@ -94,7 +94,7 @@ Every template ships with `YOUR_MODEL` and `YOUR_PROVIDER` placeholders. Replace
 | `anthropic` | `claude-sonnet-4-20250514` |
 | `ollama` | `qwen3:32b`, `llama3:70b` |
 | `lmstudio` | `qwen/qwen3-coder-next` |
-| `zai` | `glm-5`, `glm-4.7` |
+| `zai` | `glm-5.1` |
 | `qwen` | `qwen-max` |
 
 Run `mcp__nano-agent__check_providers()` to see which providers are available and what models they offer.

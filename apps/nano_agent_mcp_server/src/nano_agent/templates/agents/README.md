@@ -71,7 +71,7 @@ Replace `YOUR_MODEL` and `YOUR_PROVIDER` with your preferred LLM:
 | `anthropic` | `claude-opus-4-1-20250805`, `claude-opus-4-20250514`, `claude-sonnet-4-20250514`, `claude-3-haiku-20240307` | `ANTHROPIC_API_KEY` |
 | `ollama` | `gpt-oss:20b`, `gpt-oss:120b`, `qwen3-coder:30b`, `magistral:latest` | None (local) |
 | `lmstudio` | Dynamic (queries local API at `127.0.0.1:1234`) | None (local) |
-| `zai` | `glm-5`, `glm-4.7`, `glm-4.5-air` | `Z_AI_API_KEY` |
+| `zai` | `glm-5.1` | `Z_AI_API_KEY` |
 | `qwen` | `coder-model` | Requires prior `qwen` CLI authentication |
 
 Anthropic models require full date-suffixed names (e.g., `claude-sonnet-4-20250514`, not `claude-sonnet-4`).

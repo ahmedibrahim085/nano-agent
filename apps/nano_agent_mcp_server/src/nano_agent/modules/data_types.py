@@ -20,7 +20,7 @@ class PromptNanoAgentRequest(BaseModel):
         max_length=10000
     )
     model: str = Field(
-        default="glm-5",
+        default="glm-5.1",
         description="LLM model to use for the agent"
     )
     provider: Literal["openai", "anthropic", "ollama", "lmstudio", "zai", "qwen"] = Field(
@@ -51,7 +51,7 @@ class LaunchAgentRequest(BaseModel):
         min_length=1
     )
     model: str = Field(
-        default="glm-5",
+        default="glm-5.1",
         description="LLM model to use for the agent"
     )
     provider: Literal["openai", "anthropic", "ollama", "lmstudio", "zai", "qwen"] = Field(

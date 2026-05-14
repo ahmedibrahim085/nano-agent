@@ -13,6 +13,7 @@ load_dotenv()
 from .modules.nano_agent import prompt_nano_agent, launch_agent, check_providers  # noqa: E402
 from .modules.constants import MCP_SERVER_INSTRUCTIONS  # noqa: E402
 from .modules.template_resources import register_template_resources  # noqa: E402
+from .modules.mcp_logging import setup_mcp_action_log, LOG_FILE  # noqa: E402
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -34,7 +35,8 @@ def run():
     """Entry point for the nano-agent command."""
     try:
         setproctitle.setproctitle("nano-agent-mcp")
-        logger.info("Starting Nano Agent MCP Server...")
+        setup_mcp_action_log()
+        logger.info(f"Starting Nano Agent MCP Server (action log: {LOG_FILE})...")
         # FastMCP.run() handles its own async context with anyio
         # Don't wrap it in asyncio.run()
         mcp.run()

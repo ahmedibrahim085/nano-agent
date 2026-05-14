@@ -99,23 +99,17 @@ class TestRegistryContents:
         missing = all_models - set(MODEL_CAPABILITIES.keys())
         assert not missing, f"Models missing from MODEL_CAPABILITIES: {missing}"
 
-    def test_glm47_has_full_output_capacity(self):
-        """GLM-4.7 gets its full 131K output capacity."""
-        from nano_agent.modules.constants import MODEL_CAPABILITIES
-
-        assert MODEL_CAPABILITIES["glm-4.7"].max_tokens == 131072
-
     def test_glm5_has_full_output_capacity(self):
-        """GLM-5 gets its full 131K output capacity."""
+        """GLM-5.1 gets its full 131K output capacity."""
         from nano_agent.modules.constants import MODEL_CAPABILITIES
 
-        assert MODEL_CAPABILITIES["glm-5"].max_tokens == 131072
+        assert MODEL_CAPABILITIES["glm-5.1"].max_tokens == 131072
 
     def test_glm5_thinking_enabled(self):
-        """GLM-5 has thinking enabled via extra_body with LiteLLM passthrough."""
+        """GLM-5.1 has thinking enabled via extra_body with LiteLLM passthrough."""
         from nano_agent.modules.constants import MODEL_CAPABILITIES
 
-        caps = MODEL_CAPABILITIES["glm-5"]
+        caps = MODEL_CAPABILITIES["glm-5.1"]
         assert caps.extra_body is not None
         assert caps.extra_body["thinking"] == {"type": "enabled"}
         # allowed_openai_params tells LiteLLM to pass thinking through
@@ -151,8 +145,8 @@ class TestLookupFunction:
             MODEL_CAPABILITIES,
         )
 
-        cap = get_model_capabilities("glm-4.7")
-        assert cap is MODEL_CAPABILITIES["glm-4.7"]
+        cap = get_model_capabilities("glm-5.1")
+        assert cap is MODEL_CAPABILITIES["glm-5.1"]
 
     def test_get_model_capabilities_unknown_model(self):
         """Unknown model returns DEFAULT_MODEL_CAPABILITY."""
@@ -226,19 +220,11 @@ class TestToolSupportValidation:
         assert "gemma3:27b" in err
         assert "qwen3-coder:30b" in err or "gpt-5-mini" in err
 
-    def test_validate_tool_support_glm47_supported(self):
-        """GLM-4.7 supports tools."""
-        from nano_agent.modules.provider_config import ProviderConfig
-
-        ok, err = ProviderConfig.validate_tool_support("glm-4.7")
-        assert ok is True
-        assert err is None
-
     def test_validate_tool_support_glm5_supported(self):
-        """GLM-5 supports tools."""
+        """GLM-5.1 supports tools."""
         from nano_agent.modules.provider_config import ProviderConfig
 
-        ok, err = ProviderConfig.validate_tool_support("glm-5")
+        ok, err = ProviderConfig.validate_tool_support("glm-5.1")
         assert ok is True
         assert err is None
 
@@ -249,20 +235,11 @@ class TestToolSupportValidation:
 class TestGetModelSettings:
     """Tests for rewritten get_model_settings()."""
 
-    def test_get_model_settings_glm47(self):
-        """GLM-4.7 gets full capacity settings."""
-        from nano_agent.modules.provider_config import ProviderConfig
-
-        ms = ProviderConfig.get_model_settings("glm-4.7", "zai")
-        assert ms.max_tokens == 131072
-        assert ms.temperature == 1.0
-        assert ms.top_p == 0.95
-
     def test_get_model_settings_glm5(self):
-        """GLM-5 gets full capacity settings."""
+        """GLM-5.1 gets full capacity settings."""
         from nano_agent.modules.provider_config import ProviderConfig
 
-        ms = ProviderConfig.get_model_settings("glm-5", "zai")
+        ms = ProviderConfig.get_model_settings("glm-5.1", "zai")
         assert ms.max_tokens == 131072
         assert ms.temperature == 1.0
         assert ms.top_p == 0.95
@@ -386,7 +363,7 @@ class TestGetModelSettings:
         assert ms.extra_body is None
 
     def test_get_model_settings_existing_models_unchanged(self):
-        """Existing models (gpt-5-mini, glm-4.7) produce identical ModelSettings."""
+        """Existing model (gpt-5-mini) produces ModelSettings with no extended fields."""
         from nano_agent.modules.provider_config import ProviderConfig
 
         # GPT-5-mini: no new fields → all None
@@ -394,11 +371,6 @@ class TestGetModelSettings:
         assert ms.parallel_tool_calls is None
         assert ms.frequency_penalty is None
         assert ms.presence_penalty is None
-        assert ms.extra_body is None
-
-        # GLM-4.7: has top_p but no new fields
-        ms = ProviderConfig.get_model_settings("glm-4.7", "zai")
-        assert ms.parallel_tool_calls is None
         assert ms.extra_body is None
 
 
@@ -438,29 +410,16 @@ class TestRegressionGuards:
 class TestIntegrationPipeline:
     """Integration tests: validate + settings compose correctly."""
 
-    def test_glm47_full_pipeline(self):
-        """GLM-4.7: passes validation, gets full-capacity ModelSettings."""
-        from nano_agent.modules.provider_config import ProviderConfig
-        from agents import ModelSettings
-
-        ok, err = ProviderConfig.validate_tool_support("glm-4.7")
-        assert ok is True
-
-        ms = ProviderConfig.get_model_settings("glm-4.7", "zai")
-        assert isinstance(ms, ModelSettings)
-        assert ms.temperature == 1.0
-        assert ms.max_tokens == 131072
-        assert ms.top_p == 0.95
 
     def test_glm5_full_pipeline(self):
-        """GLM-5: passes validation, gets full-capacity ModelSettings with thinking."""
+        """GLM-5.1: passes validation, gets full-capacity ModelSettings with thinking."""
         from nano_agent.modules.provider_config import ProviderConfig
         from agents import ModelSettings
 
-        ok, err = ProviderConfig.validate_tool_support("glm-5")
+        ok, err = ProviderConfig.validate_tool_support("glm-5.1")
         assert ok is True
 
-        ms = ProviderConfig.get_model_settings("glm-5", "zai")
+        ms = ProviderConfig.get_model_settings("glm-5.1", "zai")
         assert isinstance(ms, ModelSettings)
         assert ms.temperature == 1.0
         assert ms.max_tokens == 131072

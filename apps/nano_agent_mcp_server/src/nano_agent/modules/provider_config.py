@@ -101,7 +101,7 @@ class ProviderConfig:
         """Build ModelSettings from the per-model capabilities registry.
 
         Args:
-            model: Model identifier (e.g., "glm-4.7", "gpt-5-mini")
+            model: Model identifier (e.g., "glm-5.1", "gpt-5-mini")
             provider: Provider name (for logging only)
 
         Returns:

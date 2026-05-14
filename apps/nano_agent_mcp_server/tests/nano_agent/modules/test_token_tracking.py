@@ -28,7 +28,7 @@ class TestTokenTracker:
         """Test tracker initialization with different models."""
         # Default initialization
         tracker = TokenTracker()
-        assert tracker.model == "glm-5"
+        assert tracker.model == "glm-5.1"
         assert tracker.provider == "zai"
         assert tracker.total_usage.total_tokens == 0
         

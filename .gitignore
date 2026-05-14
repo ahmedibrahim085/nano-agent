@@ -98,3 +98,15 @@ logs/
 
 # Claude Code hook artifacts
 .claude-flow/
+
+# OS noise
+.DS_Store
+
+# OMC session state (oh-my-claudecode)
+.omc/
+
+# Claude Code per-session metadata (do not version)
+.claude/teammate-context.md
+
+# Stray drawing logs from Excalidraw MCP
+excalidraw.log

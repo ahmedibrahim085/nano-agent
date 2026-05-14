@@ -151,6 +151,149 @@ These decisions were made during PRD planning and are binding for all spec files
 - [ ] Templates inject content via `instructions_override` (infrastructure from US-010)
 - [ ] Tests for template loading, variable substitution, missing variables, and custom templates
 
+#### US-012: Ollama Cloud Provider + Live Model Discovery & Search
+**Description:** As an AI engineer, I want to call Ollama Cloud's hosted high-parameter models (`gpt-oss:120b-cloud`, `qwen3-coder:480b-cloud`, `deepseek-v3.1:671b-cloud`, future additions) directly from nano-agent — and discover/filter the current catalog at runtime so I can find the right family + size without waiting for a code release every time Ollama publishes a new model.
+
+**Motivation:** Today nano-agent has six providers; the `ollama` provider routes to localhost only. Ollama's cloud catalog at `https://ollama.com` is a separate first-party endpoint hosting datacenter-scale models behind a Bearer token — datacenters where 671B-parameter open models actually fit. Hardcoding the catalog in `constants.py` (as we do for every other provider) is brittle here because Ollama updates the cloud catalog frequently — the registry goes stale fast. So this story bundles three pieces: **(a)** the provider plumbing, **(b)** live model discovery via `/v1/models`, and **(c)** a search/filter MCP tool that lets a user (or agent) find a model by family + size without knowing the exact ID.
+
+**Acceptance Criteria:**
+
+*Provider plumbing*
+- [ ] New provider `ollama_cloud` registered in `PROVIDER_REQUIREMENTS`, `AVAILABLE_MODELS`, `MODEL_INFO`, and the `Literal` provider tuple in `data_types.py`
+- [ ] Endpoint: `https://ollama.com/v1/` (OpenAI-compatible) wired via `OpenAIChatCompletionsModel` — same pattern as `ollama`, `lmstudio`, `qwen`
+- [ ] Authentication: Bearer token from env var `OLLAMA_API_KEY` (matches Ollama's own convention); missing key → graceful `down` status, not a crash
+- [ ] Health check (`check_providers`) extended for `ollama_cloud`: verifies API key set + endpoint reachable via `/v1/models`
+- [ ] Bootstrap model list in `constants.py` covering today's known cloud models — `gpt-oss:120b-cloud`, `gpt-oss:20b-cloud`, `qwen3-coder:480b-cloud`, `deepseek-v3.1:671b-cloud` — used **only** as fallback when live discovery fails
+- [ ] Cross-provider tool compatibility: existing 13 `@function_tool` agent tools (read_file, write_file, bash, etc.) work against Ollama Cloud models with no per-provider hacks
+- [ ] Token tracking entries in `token_tracking.py` for known cloud models (pricing initially 0.00/0.00 — preview is free; update when Ollama publishes per-token pricing)
+
+*Live model discovery*
+- [ ] New helper `ProviderConfig.discover_models(provider: str) -> list[str]` that queries the provider's `/v1/models` endpoint and returns the live catalog
+- [ ] Per-provider opt-in via a `supports_dynamic_discovery: bool` flag — initially `True` for `ollama_cloud`, `ollama`, `lmstudio`, `openai`; `False` for `zai`, `qwen`, `anthropic` (until proven safe)
+- [ ] Result cached in-process with configurable TTL (default 300s, env var `NANO_AGENT_MODEL_DISCOVERY_TTL_SECONDS`)
+- [ ] `check_providers()` consults the cache, refreshing if expired; the `available_models` field reflects the live catalog, not just the hardcoded list
+- [ ] Graceful degradation: if `/v1/models` times out or 5xxs, fall back to the bootstrap list in `constants.py` and surface `discovery_error` in response metadata
+- [ ] Discovery never blocks an agent call — only `check_providers()` and `find_models()` trigger network fetches
+
+*Model search MCP tool*
+- [ ] New MCP tool `find_models(family: str | None = None, size: str | None = None, provider: str | None = None) -> list[ModelMatch]`
+- [ ] `family` matches case-insensitive substring against the part of the model ID before `:` (the family segment). Examples:
+  - `find_models(family="qwen3")` → returns all qwen3-* models across providers (local + cloud)
+  - `find_models(family="gpt-oss")` → returns gpt-oss:20b, gpt-oss:120b, gpt-oss:20b-cloud, gpt-oss:120b-cloud
+- [ ] `size` matches case-insensitive substring of the size segment (the part after `:`, before any `-cloud` / EOL suffix). Examples:
+  - `find_models(size="27b")` → all 27B models
+  - `find_models(family="qwen3.6", size="27")` → matches a `qwen3.6:27b` (or `qwen3.6:27b-cloud`) entry — exactly the use case the user described
+- [ ] `provider` (optional) restricts results to one provider; otherwise searches across all discovery-enabled providers plus their hardcoded entries
+- [ ] Each result entry: `{provider, model, source: "live" | "bootstrap", capabilities_known: bool}` — `capabilities_known` tells callers whether `MODEL_CAPABILITIES` has a tuned entry (i.e. whether tool support / max_tokens / temperature defaults are reliable for this model)
+- [ ] Empty filter `find_models()` returns the full catalog across all discovery-enabled providers (capped to 200 entries to bound output size)
+- [ ] `mcp_logging` emits `models.discover` (provider, count, source, elapsed_s) and `models.find` (query, result_count, elapsed_s) events
+
+*Tests*
+- [ ] `ollama_cloud` provider: end-to-end agent run against the live endpoint (or mocked) — write file → read file → report
+- [ ] Health check: API key missing → `status=down`; key present + endpoint reachable → `status=up` with live model list
+- [ ] Discovery: mocked `/v1/models` response returns expected models; TTL cache hits; cache miss after TTL; `/v1/models` failure falls back to bootstrap list with `discovery_error` surfaced
+- [ ] `find_models`: family-only filter, size-only filter, both, neither, with/without provider scoping, no-match case
+- [ ] Capabilities fallback: unknown model reports `capabilities_known=false` and uses `DEFAULT_MODEL_CAPABILITY`
+
+**Operational recommendations (added during planning review):**
+- [ ] **HTTP 429 rate-limit handling**: Ollama Cloud's preview tier may rate-limit; on 429 response (from `/v1/models` discovery, `/v1/chat/completions`, or any cloud endpoint), retry with exponential backoff (250ms → 500ms → 1s; max 3 attempts) before surfacing as failure. Retry behavior controllable via `NANO_AGENT_RETRY_ON_429={true|false}` (default `true`)
+- [ ] **Deep health probe**: when `OLLAMA_API_KEY` is present, `check_providers()` optionally runs a tiny chat completion against the cheapest available cloud model (likely `gpt-oss:20b-cloud`) to distinguish "API key valid + endpoint healthy" from "API key present but rejected / quota-exceeded". Controlled by a `deep_health: bool = False` parameter — opt-in because it costs a real request.
+- [ ] **Auth-failure error mapping**: `401 Unauthorized` from cloud → `status=down`, `error="Invalid OLLAMA_API_KEY"`; `403 Forbidden` → `error="API key valid but unauthorized for this model"`; both surfaced cleanly in `check_providers` output
+
+**Open Design Questions (resolve during spec phase):**
+- Should `find_models` also surface context-window and parameter-count metadata when the provider's `/v1/models` response includes them?
+- Bootstrap list location: stay in `constants.py` (current pattern) or move to a separate `bootstrap_models.json` so it can be updated without a code release?
+- Should `check_providers()` force a discovery refresh, or respect the TTL cache? (Probably force — health check is a deliberate user action.)
+- For providers without `/v1/models` (e.g. Anthropic), `find_models` falls back to hardcoded `AVAILABLE_MODELS` — confirm this is the right behavior or whether we should hide them entirely from search results.
+- Deep-health-probe model selection: hardcoded cheapest model in bootstrap list, or auto-derived from the discovery result's lowest-cost entry?
+
+#### US-013: Multi-Model Fan-Out Execution
+**Description:** As an AI engineer, I want to send the same prompt to multiple `(model, provider)` combinations in a single MCP call and receive all of their responses with per-model timing and cost data, so I can compare answers side-by-side without orchestrating N separate calls from the client.
+
+**Motivation:** Today's parallelism is client-orchestrated — the MCP caller issues N concurrent `prompt_nano_agent` calls. That works (ContextVars guarantee isolation), but the comparison logic lives in the caller and the response shape is "N separate tool results" rather than "one structured comparison". A first-class fan-out tool returns a typed `list[ModelResult]` that's iterable, sortable, and trivially serializable. **Fan-out is also the foundational primitive** that US-014 (Race) and US-015 (Ensemble) build on — shipping it first creates shared infrastructure both depend on.
+
+**Acceptance Criteria:**
+
+*Tool surface*
+- [ ] New MCP tool: `prompt_models_parallel(prompt: str, model_specs: list[ModelSpec], workspace?: str = None, isolate_workspaces: bool = False) -> ParallelResult`
+- [ ] `ModelSpec` schema: `{model: str, provider: str, model_settings?: dict, max_turns?: int = None, agent_path?: str = None}` — `agent_path` allows mixing in `launch_agent`-style identities per spec
+- [ ] `ModelResult` schema: `{model, provider, success, result?, error?, error_type?, elapsed_s, turn_count?, token_usage?, cost?, capabilities_known: bool}`
+- [ ] `ParallelResult` schema: `{results: list[ModelResult], started_at, ended_at, total_wall_elapsed_s, total_token_usage, fastest_spec_index?: int, cheapest_spec_index?: int, deduped_specs: list[int]}` — `fastest_spec_index` and `cheapest_spec_index` index into `results` (None if no spec succeeded); `deduped_specs` lists indices of duplicate specs that were silently dropped
+
+*Pre-flight validation (recommendation: added during planning review)*
+- [ ] Validate each `ModelSpec` before any spec runs: provider must be in the `Literal[...]` tuple from `data_types.py`; model not in `MODEL_CAPABILITIES` is allowed but the spec gets `capabilities_known=False` in its eventual ModelResult
+- [ ] Invalid specs fail fast with a structured `ValidationError` response — zero token cost incurred when input is malformed
+- [ ] **Deduplication**: exact duplicate specs (same model+provider+settings) deduped silently with `deduped_specs` reporting the dropped indices — prevents accidental double-billing
+
+*Concurrency mechanics*
+- [ ] One failing spec does NOT cancel the others — every spec runs to completion (or its `max_turns` cap) independently
+- [ ] Uses `asyncio.gather(..., return_exceptions=True)` so exceptions become structured failures in their `ModelResult`, not thrown out
+- [ ] Each spec gets its own ContextVar copy (workspace, bash CWD, bg PIDs) — reuses existing isolation infrastructure
+- [ ] `isolate_workspaces=False` (default): all specs share the requested `workspace` (good for code review where they all read the same files)
+- [ ] `isolate_workspaces=True`: each spec gets a sandboxed subdir `{workspace}/.nano-agent/parallel/{spec_index}/` to prevent file-write collisions
+- [ ] Concurrency cap configurable via `NANO_AGENT_PARALLEL_MAX_CONCURRENT` (default 4); excess specs queue and start as others finish
+
+*Observability*
+- [ ] `mcp_logging` events: `mcp.prompt_models_parallel.start` (spec_count, dedup_count), `.validation_failed` (errors), `.spec_start` (spec_index, model, provider), `.spec_end` (spec_index, success, elapsed_s), `.end` (total_elapsed_s, success_count, failure_count, fastest_spec_index, cheapest_spec_index)
+
+*Tests*
+- [ ] Two specs both succeed → wall ≈ max(per_spec), not sum; `fastest_spec_index` and `cheapest_spec_index` populated correctly
+- [ ] One fails one succeeds → both ModelResults returned; `fastest_spec_index` points to the successful one (failed specs ineligible)
+- [ ] `isolate_workspaces=true` sandboxes each spec's file writes
+- [ ] Concurrency cap honored (6 specs, cap=2 → only 2 concurrent at a time)
+- [ ] Pre-flight validation rejects invalid provider before any spec runs (zero token cost)
+- [ ] Deduplication: same spec listed twice → only one runs, `deduped_specs` reports the dropped index
+
+**Open Design Questions (resolve during spec phase):**
+- Streaming partial results before all specs finish? Coupled to US-007 (Streaming Progress); defer until that ships.
+- Optional `max_total_cost_usd` parameter that cancels remaining specs once exceeded?
+- Should the response include a richer correctness ranking (judge-model best-of) at server side, or defer that to US-015?
+
+#### US-014: Multi-Model Race (First-Success Wins)
+**Description:** As an AI engineer, I want to dispatch the same prompt to multiple providers in parallel and receive only the **first successful** response — with the slower or failing providers automatically cancelled — so I get the lowest possible latency for time-sensitive workflows without writing fallback logic.
+
+**Motivation (real-world driver):** Providers fail unpredictably. During this project's GLM-5.1 timeout investigation (traces preserved in `~/.nano-agent/logs/mcp-actions.log`), we confirmed that a single-provider strategy is brittle: GLM-5.1 with thinking-on can take 120s+ on tasks where `gpt-5-mini` finishes in 15s — and either can hit transient errors that look indistinguishable from real timeouts. US-003's sequential fallback wastes the wait. **Race turns "fail-and-retry" into "race-and-take-winner"**, cutting tail latency from "worst-case provider" to "best-case provider in flight" — a strict improvement over both single-provider and sequential-fallback strategies.
+
+**Acceptance Criteria:**
+
+*Tool surface*
+- [ ] New MCP tool: `prompt_models_race(prompt: str, model_specs: list[ModelSpec], workspace?: str = None, max_wait_s: float = 300.0, per_spec_timeout_s?: float = None, skip_known_down: bool = True, preset?: str = None) -> RaceResult`
+- [ ] `RaceResult` schema: `{winner: ModelResult | None, losers: list[ModelResult], total_wall_elapsed_s, race_aborted_reason?: str}` — `winner` is the first spec to return `success=true`; each loser carries `cancelled: bool`, `cancelled_at_elapsed_s?`, `skipped_provider_down?: bool`
+
+*Cancellation & timing*
+- [ ] Cancellation mechanic: `asyncio.wait(..., return_when=FIRST_COMPLETED)` loop — on first `success=true` result, remaining tasks get `task.cancel()`
+- [ ] Cancelled tasks complete their `finally` blocks (existing `_cleanup_background_processes` flow) so background processes spawned by losers are killed
+- [ ] If ALL specs fail (no success), returns `winner=None` + full `losers` list — caller inspects each failure
+- [ ] `max_wait_s` caps the **whole race**; `per_spec_timeout_s` (optional) caps **each individual spec** — both apply, whichever hits first wins
+
+*Health-check integration (recommendation: added during planning review)*
+- [ ] Before dispatching, consult `check_providers()` cache (US-002, shipped) and skip specs whose provider is currently `status=down`. Controlled by `skip_known_down: bool = True` parameter.
+- [ ] Skipped specs appear in `losers` with `skipped_provider_down=true` and `error="provider known down at race start"` — they still count toward the race outcome (if all specs are skipped, `winner=None` and `race_aborted_reason="all_providers_down"`)
+
+*Reliability preset (recommendation: added during planning review)*
+- [ ] **`preset="reliability"` shortcut**: server-side default 3-way race using a curated combo (initial: `glm-5.1/zai`, `gpt-5-mini/openai`, `qwen3-coder:30b/ollama`). Configurable via `NANO_AGENT_RACE_PRESET_RELIABILITY` env var (JSON list of ModelSpec)
+- [ ] Caller can override with their own `model_specs` — `preset` and `model_specs` are mutually exclusive (passing both raises ValidationError)
+
+*Cleanup & observability*
+- [ ] Builds on US-013's shared infrastructure (ContextVar isolation, concurrency cap, `ModelResult` schema, validation, deduplication)
+- [ ] Files written by cancelled specs in their workspace are NOT cleaned up (intentional — easy debugging); background processes ARE killed
+- [ ] `mcp_logging` events: `mcp.prompt_models_race.start`, `.skip_down` (spec_index, provider), `.spec_start`, `.winner` (spec_index, model, provider, elapsed_s), `.cancel` (spec_index, cancelled_at_elapsed_s), `.timeout`, `.end`
+
+*Tests*
+- [ ] First succeeds fast → winner=first; remaining losers have `cancelled=true`
+- [ ] First fails, second succeeds → winner=second; first is in losers with error
+- [ ] All fail → `winner=None`
+- [ ] `max_wait_s` timeout cancels stragglers
+- [ ] `per_spec_timeout_s` cancels just-the-slow-one (other specs unaffected)
+- [ ] `skip_known_down=true` excludes specs whose provider's health check is `down`; all-down → `race_aborted_reason="all_providers_down"`
+- [ ] `preset="reliability"` expands to the configured spec list; caller-provided specs override preset
+- [ ] Cancellation kills background processes spawned by losers (regression guard against orphaned bash subprocesses)
+
+**Open Design Questions (resolve during spec phase):**
+- Does a partial agent output (max_turns exceeded but partial result available) count as "success" for race purposes? Probably not — race semantics should mean `success=true` from Runner.run.
+- Should the `reliability` preset's model list be hardcoded in `constants.py` or auto-derived from `check_providers().status=up` providers at server startup?
+- Should we expose a "warm winner" optimization — remember which spec won the last K races for similar prompts and bias scheduling order toward it?
+
 ---
 
 ### Phase 3: Intelligence & Orchestration (v2.2)
@@ -200,6 +343,36 @@ These decisions were made during PRD planning and are binding for all spec files
 - [ ] Response: `{success, steps: [{role, model, result, duration}], total_duration, failed_step_index}`
 - [ ] Tests for: 2-step pipeline, 3-step pipeline, mid-pipeline failure, variable passing
 
+#### US-015: Multi-Model Ensemble (Reduce to One Answer)
+**Description:** As an AI engineer, I want to dispatch the same prompt to multiple models and have nano-agent **automatically combine their responses into a single reduced answer** (via consensus, judge-based ranking, or synthesis), so I get production-grade reliability through cross-model agreement without writing a separate aggregation layer in my client.
+
+**Motivation:** For high-stakes outputs (code review verdicts, security analysis, refactor proposals), one model's answer is a single point of failure. Asking N models and reducing catches hallucinations and surfaces real agreement. Today this requires N calls + custom reducer code in the client — error-prone, not reusable, and the reducer often duplicates LLM-as-judge logic that belongs in shared infrastructure.
+
+**Acceptance Criteria:**
+- [ ] New MCP tool: `prompt_models_ensemble(prompt: str, model_specs: list[ModelSpec], reducer: ReducerSpec, workspace?: str = None) -> EnsembleResult`
+- [ ] `ReducerSpec` is a tagged union with three implementations:
+  - [ ] **`{mode: "consensus", min_agreement: float = 0.7, embedding_model?: str}`** — cluster responses via embedding similarity; return the centroid of the largest cluster if cluster_size/total ≥ `min_agreement`; otherwise return `agreement=false` and all responses
+  - [ ] **`{mode: "best", judge_model: str, judge_provider: str, rubric: str}`** — send all responses + the rubric to a judge model; ask it to pick the best; return winner + judge's rationale
+  - [ ] **`{mode: "merge", merge_model: str, merge_provider: str, merge_prompt: str}`** — send all responses to a synthesizer model that unifies them into one response
+- [ ] `EnsembleResult` schema: `{reduced: str | None, reducer_metadata: dict, all_responses: list[ModelResult], total_elapsed_s, total_cost_usd}` — `reducer_metadata` contains mode-specific fields (cluster sizes for consensus, judge rationale for best, synthesis notes for merge)
+- [ ] Two-stage execution: stage 1 dispatches specs in parallel (reusing US-013); stage 2 runs the reducer (sequential, on the result set)
+- [ ] Reducer failure is non-fatal: if the reducer model fails, returns `reduced=None` + `reducer_error` field + all raw responses still preserved
+- [ ] Cost rollup includes the reducer model's tokens — `total_cost_usd` covers both stages
+- [ ] `mcp_logging` events: `mcp.prompt_models_ensemble.dispatch_end`, `.reduce_start` (mode), `.reduce_end` (mode, agreement_metric, elapsed_s)
+- [ ] Tests: consensus mode with 3 similar responses → returns centroid; consensus with 3 divergent → returns `agreement=false`; best mode → judge selects one with rationale; merge mode → synthesized output references inputs; reducer model fails → graceful degradation with `reducer_error` set
+
+**Operational recommendations (added during planning review):**
+- [ ] **`max_total_cost_usd` cost cap**: optional parameter that aborts the ensemble before dispatch if the projected cost (estimated from cached pricing × prompt-size token estimate × spec count) would exceed the cap. Returns `EnsembleResult` with `reduced=None`, `cost_cap_exceeded=true`, and `estimated_cost_usd` so the caller knows how close they were. Default `None` = no cap (current behavior).
+- [ ] **`abstain_on_disagreement` for consensus mode**: `{mode: "consensus", min_agreement: 0.7, abstain_on_disagreement: bool = False}`. When `true` and no agreement reached, returns `reduced=None` and `reducer_metadata={"abstained": true, "max_cluster_size": N}` — forces the caller to handle ambiguity explicitly instead of receiving an unclear "here are all 3 different answers" payload that they then have to disambiguate.
+- [ ] **Structured-output ensemble**: if all responses follow a JSON schema (i.e. `model_specs` all used the same `response_format`), the reducer applies a schema-aware merge — per-field consensus across responses, surfacing per-field disagreement metadata. Avoids the "stringly-typed consensus" trap where two semantically-identical answers fail similarity matching due to surface-text differences.
+
+**Open Design Questions (resolve during spec phase):**
+- Embedding model for consensus mode: default to `gpt-5-nano` (cheap, available) or a local Ollama embedding (`nomic-embed-text`) when discoverable?
+- Should consensus mode have a structural-similarity option (e.g. AST diff for code outputs) in addition to embedding similarity?
+- "Best" mode bias: the judge model has its own preferences. Worth a `multi_judge` extension where N judges vote? Defer to v2.4.
+- For merge mode: the `merge_prompt` should accept template variables `{response_1}`, `{response_2}`, ... — clean syntax for the implementer.
+- Cost-cap estimation accuracy: prompt-size × spec-count is rough — should we use actual token-counting (tiktoken or provider-specific) for cap precision, accepting the small extra latency?
+
 ---
 
 ### Phase 4: Observability & Persistence (v2.3)
@@ -243,6 +416,38 @@ These decisions were made during PRD planning and are binding for all spec files
 - [ ] New `memory: false` parameter to disable memory for a single execution
 - [ ] Tests for: memory write, memory read, memory injection into prompt, size cap, disable flag
 
+#### US-011: Cross-Call Multi-Turn Continuity
+**Description:** As an AI engineer using nano-agent via MCP, I want consecutive `prompt_nano_agent` / `launch_agent` calls to share conversation state when I opt in, so that I can have an iterative back-and-forth with a worker agent — refining its previous output, asking follow-up questions, or correcting course — without manually re-embedding the full prior context in every new prompt.
+
+**Motivation:** Today every MCP call is stateless (verified: `PromptNanoAgentRequest` has no session field; `Runner.run` always starts a fresh agent). Users wanting continuity must either (a) include the entire prior thread in each new prompt — token-expensive and fragile — or (b) hand-roll file-based handoff. This story makes opt-in continuity a first-class capability.
+
+**Acceptance Criteria:**
+- [ ] New optional `session_id: str` parameter on `prompt_nano_agent` and `launch_agent` (default `None` = stateless one-shot, current behavior preserved)
+- [ ] When `session_id` is supplied, the agent loads prior conversation state from a deterministic store, executes the new turn with that history in context, then persists the updated state before returning
+- [ ] Stateless path (no `session_id`) remains the default and is fully backward compatible — zero behavior change for existing callers
+- [ ] **Two persistence backends, both must pass the same test suite**, selectable via env var `NANO_AGENT_SESSION_BACKEND={file|memory}` (default `file`):
+  - [ ] **File backend**: JSONL message log at `~/.nano-agent/sessions/{session_id}/messages.jsonl` — append-only, durable across MCP server restarts
+  - [ ] **Memory backend**: in-process `dict[session_id, list[message]]` — zero read latency, cleared on server restart (useful for hot iterative loops where durability isn't needed)
+- [ ] Session state stored: full message history (user / assistant / tool_call / tool_result) with timestamps and model/provider used per turn
+- [ ] Sliding-window cap on history: default last 50 turns OR 100K tokens (whichever hit first), configurable via env vars
+- [ ] On cap overflow: drop oldest turns by default; opt-in model-driven summarization if `NANO_AGENT_SESSION_SUMMARIZE_ON_OVERFLOW=1`
+- [ ] `session_id` is opaque to nano-agent — caller is responsible for collision avoidance (UUID v4 or workflow-scoped string recommended)
+- [ ] Two new MCP tools: `clear_session(session_id)` wipes one session's state; `list_sessions()` enumerates known sessions with last-touched timestamp, turn count, and rolled-up token usage
+- [ ] `mcp_logging` emits structured events: `session.load` (session_id, prior_turns, backend), `session.save` (session_id, total_turns, bytes_written), `session.overflow` (session_id, dropped_turns)
+- [ ] Backward-compat check: existing PRs that don't pass `session_id` see identical behavior to today; existing tests pass unchanged
+- [ ] Tests: stateless still works (no regression); two sequential calls with same `session_id` share context; concurrent calls with different `session_id`s don't bleed; overflow drops oldest correctly; summarization-on-overflow produces a single condensed system turn; `clear_session` wipes state; `list_sessions` reports accurately; both backends pass identical test suite
+
+**Operational recommendations (added during planning review):**
+- [ ] **Session TTL / auto-cleanup**: file-backend sessions auto-expire after `NANO_AGENT_SESSION_TTL_DAYS` (default 30). On every `prompt_nano_agent` invocation, asynchronously sweep `~/.nano-agent/sessions/` and remove sessions whose `last-touched` mtime exceeds the TTL. Memory backend dies with the process so no cleanup needed.
+- [ ] **Convenience alias `session_id="latest"`**: resolves to the most-recently-touched session for the current `workspace` (or the calling agent_path, if `launch_agent`). Avoids the "did I save my session ID somewhere?" problem during interactive iteration.
+- [ ] **Bulk operations on `clear_session`**: accept either a single `session_id` or `"*"` for wipe-all, plus an optional `older_than_days: int` filter for selective cleanup.
+
+**Open Design Questions (resolve during spec phase):**
+- Default backend: `file` (durable) is safer for end-users; `memory` is faster for orchestrators. Which should `NANO_AGENT_SESSION_BACKEND` default to?
+- Should `launch_agent` sessions key by `(agent_path, session_id)` so the same session-id under two different agents stays separate?
+- Should we expose session-state as MCP resources (`nano-agent://sessions/{id}`) for read-only inspection?
+- Should `session_id="latest"` resolve scope by `workspace`, `agent_path`, both, or be configurable per call?
+
 ---
 
 ## Functional Requirements
@@ -270,6 +475,10 @@ These decisions were made during PRD planning and are binding for all spec files
 - **FR-12**: Fallback chain iterates providers in order, skipping known-down via health check
 - **FR-13**: Default fallback: `zai/glm-4.7` → `lmstudio/qwen3-coder-next` → `ollama/qwen3-coder:30b`
 - **FR-14**: Each fallback attempt logged with reason for failure in response metadata
+- **FR-39**: New provider `ollama_cloud` — OpenAI-compat against `https://ollama.com/v1/`, Bearer auth via `OLLAMA_API_KEY`; wires through existing `OpenAIChatCompletionsModel` (same pattern as `ollama`/`lmstudio`/`qwen`)
+- **FR-40**: Live model discovery via `/v1/models` for any provider with `supports_dynamic_discovery=True`; result cached in-process with configurable TTL (default 300s, env var `NANO_AGENT_MODEL_DISCOVERY_TTL_SECONDS`)
+- **FR-41**: Graceful fallback to a bootstrap model list in `constants.py` when discovery fails (timeout, 5xx, missing key); failures surfaced as `discovery_error` in response metadata
+- **FR-42**: New MCP tool `find_models(family?, size?, provider?)` for cross-provider model search; returns entries with `{provider, model, source, capabilities_known}`
 
 ### Templates
 
@@ -292,6 +501,14 @@ These decisions were made during PRD planning and are binding for all spec files
 - **FR-25**: `{prev_output}` variable contains the `result` field from the previous step
 - **FR-26**: Pipeline halts on first step failure, returns array of step results including partial
 
+### Parallel Execution
+
+- **FR-43**: New MCP tool `prompt_models_parallel(prompt, model_specs)` — fan-out execution; returns per-spec `ModelResult` entries; one failure doesn't cancel siblings
+- **FR-44**: Workspace isolation per spec opt-in via `isolate_workspaces` flag; default shares the requested workspace across all specs
+- **FR-45**: Concurrency cap configurable via `NANO_AGENT_PARALLEL_MAX_CONCURRENT` (default 4); applies to all three parallel tools (parallel/race/ensemble)
+- **FR-46**: New MCP tool `prompt_models_race(prompt, model_specs, max_wait_s)` — first-success-wins; remaining specs cancelled via `task.cancel()`; background processes cleaned up on cancel
+- **FR-47**: New MCP tool `prompt_models_ensemble(prompt, model_specs, reducer)` — three reducer modes: `consensus` (embedding clustering with `min_agreement`), `best` (judge model + rubric), `merge` (synthesizer model + merge prompt); reducer failure is non-fatal, raw responses always preserved
+
 ### Git Tools
 
 - **FR-27**: 4 new `@function_tool` tools: `git_status`, `git_commit`, `git_branch`, `git_diff`
@@ -305,6 +522,10 @@ These decisions were made during PRD planning and are binding for all spec files
 - **FR-32**: History as JSONL (append-only), context as Markdown (updated after each execution)
 - **FR-33**: Memory injected into system prompt as `## Project Memory` section
 - **FR-34**: Size cap: last 10 executions + 2000 chars context (configurable)
+- **FR-35**: Optional `session_id` parameter on `prompt_nano_agent` and `launch_agent`; absence preserves current stateless behavior
+- **FR-36**: Two interchangeable session-persistence backends — file (JSONL at `~/.nano-agent/sessions/{session_id}/messages.jsonl`) and in-process memory dict — selectable via `NANO_AGENT_SESSION_BACKEND={file|memory}`
+- **FR-37**: Sliding-window cap on session history (default 50 turns OR 100K tokens, configurable); optional model-driven summarization on overflow via `NANO_AGENT_SESSION_SUMMARIZE_ON_OVERFLOW`
+- **FR-38**: `clear_session(session_id)` and `list_sessions()` MCP tools for session lifecycle and inspection
 
 ---
 
@@ -426,6 +647,9 @@ All new parameters are optional with sensible defaults:
 | 2 | Provider Health Check | Low | None | US-002 | Shipped |
 | 3 | Provider Fallback Chain | Medium | US-002 | US-003 | Backlog |
 | 4 | Execution Templates | Medium | US-010 (shipped) | US-004 | Backlog |
+| 12 | Ollama Cloud Provider + Model Discovery & Search | Medium-High | US-002 (health check infra) | US-012 | Backlog |
+| 13 | Multi-Model Fan-Out Execution | Medium | None (foundational for US-014 / US-015) | US-013 | Backlog |
+| 14 | Multi-Model Race (First-Success Wins) ⭐ elevated for production reliability | Low-Medium | US-013 (shared infra), US-002 (health-check skip) | US-014 | Backlog |
 
 ### Phase 3: Intelligence & Orchestration (v2.2)
 | Priority | Feature | Complexity | Dependencies | Story | Status |
@@ -433,6 +657,7 @@ All new parameters are optional with sensible defaults:
 | 5 | Provider/Model Instructions (Slimmed) | Low-Medium | US-010 (shipped) | US-001 | Backlog |
 | 6 | Smart Model Routing | Medium | US-001, US-002 | US-005 | Backlog |
 | 7 | Agent Pipeline | High | US-010 (shipped), US-003 | US-006 | Backlog |
+| 15 | Multi-Model Ensemble (Consensus / Judge / Merge) | High | US-013 (shared infra) | US-015 | Backlog |
 
 ### Phase 4: Observability & Persistence (v2.3)
 | Priority | Feature | Complexity | Dependencies | Story | Status |
@@ -440,6 +665,7 @@ All new parameters are optional with sensible defaults:
 | 8 | Streaming Progress | Medium | None | US-007 | Backlog |
 | 9 | Git-Aware Tools | Medium | None | US-008 | Backlog |
 | 10 | Agent Memory | Medium-High | None | US-009 | Backlog |
+| 11 | Cross-Call Multi-Turn Continuity | High | US-009 (shared persistence layer) | US-011 | Backlog |
 
 ---
 

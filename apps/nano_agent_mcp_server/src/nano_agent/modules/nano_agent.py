@@ -60,6 +60,9 @@ from .agent_identity import read_agent_instructions, build_layered_prompt
 # Import provider configuration
 from .provider_config import ProviderConfig, check_all_providers_async
 
+# File-based MCP action log (durable trace when invoked via MCP)
+from .mcp_logging import log_action
+
 # Initialize logger and rich console
 logger = logging.getLogger(__name__)
 console = Console()
@@ -512,6 +515,13 @@ async def _execute_nano_agent_async(request: PromptNanoAgentRequest, enable_rich
         hooks = RichLoggingHooks(token_tracker=token_tracker) if enable_rich_logging else None
         
         try:
+            log_action(
+                "runner.start",
+                model=request.model,
+                provider=request.provider,
+                max_turns=MAX_AGENT_TURNS,
+                prompt_preview=request.agentic_prompt[:200],
+            )
             # Run the agent asynchronously
             result = await Runner.run(
                 agent,
@@ -529,6 +539,14 @@ async def _execute_nano_agent_async(request: PromptNanoAgentRequest, enable_rich
             )
 
             execution_time = time.time() - start_time
+            log_action(
+                "runner.end",
+                model=request.model,
+                provider=request.provider,
+                elapsed_s=round(execution_time, 3),
+                success=True,
+                turns=len(result.messages) if hasattr(result, "messages") else None,
+            )
 
             # Extract the final output
             final_output = result.final_output if hasattr(result, 'final_output') else str(result)
@@ -570,7 +588,15 @@ async def _execute_nano_agent_async(request: PromptNanoAgentRequest, enable_rich
         full_traceback = traceback.format_exc()
         logger.error(f"Agent SDK execution failed: {str(e)}\nFull traceback:\n{full_traceback}")
         execution_time = time.time() - start_time
-        
+        log_action(
+            "runner.exception",
+            model=request.model,
+            provider=request.provider,
+            elapsed_s=round(execution_time, 3),
+            error=str(e)[:500],
+            error_type=type(e).__name__,
+        )
+
         return PromptNanoAgentResponse(
             success=False,
             error=f"Agent SDK execution failed: {str(e)}",
@@ -770,7 +796,7 @@ async def prompt_nano_agent(
                        - "Run npm install && npm test in the project"
 
         model: The LLM model to use for the agent. Options vary by provider:
-               Z.ai: glm-5 (default), glm-4.7, glm-4.5-air
+               Z.ai: glm-5.1 (default)
                OpenAI: gpt-5-mini, gpt-5-nano, gpt-5, gpt-4o
                Ollama: gpt-oss:20b, gpt-oss:120b, qwen3-coder:30b
                Qwen: coder-model
@@ -808,11 +834,20 @@ async def prompt_nano_agent(
         ... )
         {"success": True, "result": "Created schema.md with 15 JSON schemas analyzed"}
     """
+    _mcp_start = time.time()
+    log_action(
+        "mcp.prompt_nano_agent.start",
+        model=model,
+        provider=provider,
+        workspace=workspace,
+        prompt_preview=agentic_prompt[:200],
+        via_mcp=(ctx is not None),
+    )
     try:
         # Report progress if context is available
         if ctx:
             await ctx.report_progress(0.1, 1.0, "Initializing agent...")
-        
+
         # Create and validate request
         request = PromptNanoAgentRequest(
             agentic_prompt=agentic_prompt,
@@ -820,30 +855,47 @@ async def prompt_nano_agent(
             provider=provider,
             workspace=workspace or None,
         )
-        
+
         if ctx:
             await ctx.report_progress(0.3, 1.0, "Executing agent task...")
-        
+
         # Execute the agent (disable rich logging when called via MCP to avoid interference)
         # Use async version if we're already in an async context
         response = await _execute_nano_agent_async(request, enable_rich_logging=(ctx is None))
-        
+
         if ctx:
             await ctx.report_progress(1.0, 1.0, "Task completed")
             if response.success:
                 await ctx.info(SUCCESS_AGENT_COMPLETE.format(response.execution_time_seconds))
             else:
                 await ctx.error(f"Agent failed: {response.error}")
-        
+
+        log_action(
+            "mcp.prompt_nano_agent.end",
+            model=model,
+            provider=provider,
+            elapsed_s=round(time.time() - _mcp_start, 3),
+            success=response.success,
+            error=(response.error or "")[:300] if response.error else None,
+        )
+
         # Convert response to dictionary for MCP protocol
         return response.model_dump()
-        
+
     except Exception as e:
         logger.error(f"Error in prompt_nano_agent: {str(e)}", exc_info=True)
-        
+        log_action(
+            "mcp.prompt_nano_agent.exception",
+            model=model,
+            provider=provider,
+            elapsed_s=round(time.time() - _mcp_start, 3),
+            error=str(e)[:500],
+            error_type=type(e).__name__,
+        )
+
         if ctx:
             await ctx.error(f"Execution failed: {str(e)}")
-        
+
         # Return error response
         error_response = PromptNanoAgentResponse(
             success=False,
@@ -893,11 +945,21 @@ async def launch_agent(
         ...     "Build the REST API",
         ...     agent_path="/teams/backend-expert",
         ...     workspace="/projects/my-api",
-        ...     model="glm-4.7",
+        ...     model="glm-5.1",
         ...     provider="zai"
         ... )
         {"success": True, "result": "Built FastAPI application..."}
     """
+    _mcp_start = time.time()
+    log_action(
+        "mcp.launch_agent.start",
+        model=model,
+        provider=provider,
+        agent_path=agent_path,
+        workspace=workspace,
+        prompt_preview=agentic_prompt[:200],
+        via_mcp=(ctx is not None),
+    )
     try:
         # Report progress if context is available
         if ctx:
@@ -950,11 +1012,30 @@ async def launch_agent(
             else:
                 await ctx.error(f"Agent failed: {response.error}")
 
+        log_action(
+            "mcp.launch_agent.end",
+            model=model,
+            provider=provider,
+            agent_path=agent_path,
+            elapsed_s=round(time.time() - _mcp_start, 3),
+            success=response.success,
+            error=(response.error or "")[:300] if response.error else None,
+        )
+
         # Convert response to dictionary for MCP protocol
         return response.model_dump()
 
     except Exception as e:
         logger.error(f"Error in launch_agent: {str(e)}", exc_info=True)
+        log_action(
+            "mcp.launch_agent.exception",
+            model=model,
+            provider=provider,
+            agent_path=agent_path,
+            elapsed_s=round(time.time() - _mcp_start, 3),
+            error=str(e)[:500],
+            error_type=type(e).__name__,
+        )
 
         if ctx:
             await ctx.error(f"Execution failed: {str(e)}")
@@ -1013,6 +1094,8 @@ async def check_providers(
             "providers_partial": 1
         }
     """
+    _mcp_start = time.time()
+    log_action("mcp.check_providers.start", via_mcp=(ctx is not None))
     try:
         # Report progress if context is available
         if ctx:
@@ -1025,11 +1108,25 @@ async def check_providers(
         if ctx:
             await ctx.report_progress(1, 1, "Health check complete")
 
+        log_action(
+            "mcp.check_providers.end",
+            elapsed_s=round(time.time() - _mcp_start, 3),
+            success=getattr(response, "success", None),
+            providers_up=getattr(response, "providers_up", None),
+            providers_down=getattr(response, "providers_down", None),
+        )
+
         # Convert response to dictionary for MCP protocol
         return response.model_dump()
 
     except Exception as e:
         logger.error(f"Error in check_providers: {str(e)}", exc_info=True)
+        log_action(
+            "mcp.check_providers.exception",
+            elapsed_s=round(time.time() - _mcp_start, 3),
+            error=str(e)[:500],
+            error_type=type(e).__name__,
+        )
 
         if ctx:
             await ctx.error(f"Health check failed: {str(e)}")
